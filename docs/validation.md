@@ -27,9 +27,20 @@ Results from running the project on an Apple M5 Pro, macOS 27, Go 1.27, Docker D
 
 Unit tests cover the DHCP lease parser.
 
+## Phase 2: launcher process and DNS
+
+`hack/e2e.sh` now also checks:
+
+- From a pod: `nslookup e2e.kubesilicon.svc.cluster.local` returns the VM IP, and `nc` to that name on port 22 connects.
+- `SIGTERM` to the daemon: SSH to the VM still works, the object stays `Running`, and a new daemon reports the same IP.
+- `kill -9` of the daemon: SSH still works, and the new daemon adopts the launcher.
+- `running: false` through the adopted launcher: object `Stopped`, IP cleared, EndpointSlice emptied, launcher process gone, disk kept.
+- Delete: Service and EndpointSlice are garbage-collected and no launcher is left.
+
 ## Bugs the e2e test found
 
 - **Stale DHCP lease.** `/var/db/dhcpd_leases` keeps leases of old VMs. With a fixed hostname, a new VM was reported at the IP of the previous one, and the pod ping failed. A restarted VM also reuses its lease without renewing the expiry, so "lease newer than before boot" does not work either. Fix: a hostname unique per object (`<name>-<uid8>`). The same change removes the collision between VMs with the same name in different namespaces.
+- **Check that could not fail.** A first version of the "launcher exited" assertions were written as `cmd && echo`, which never fails the script, and `pgrep -f` also matched the shell running the test. They are now hard checks with a pattern that does not match itself (`[k]ubesilicond`).
 - **Cluster context.** The default kubectl context was a different cluster. The daemon now requires `-context`, and every test command passes the context explicitly.
 
 ## Not covered

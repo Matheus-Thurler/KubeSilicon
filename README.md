@@ -18,7 +18,7 @@ Run Linux virtual machines from Kubernetes objects on a Mac with Apple Silicon, 
  └──────────────────────┘              └────────────────────────────────────┘
 ```
 
-`kubesilicond` runs on the Mac, outside the cluster, watches `SiliconVM` objects and starts one VM for each. It writes `status.phase` and `status.ip` back. Pods reach the VM directly at that IP.
+`kubesilicond` runs on the Mac, outside the cluster, watches `SiliconVM` objects and starts one VM for each, in its own detached process. It writes `status.phase` and `status.ip` back and publishes a headless Service, so pods reach the VM by IP or by name (`<name>.<namespace>.svc`).
 
 ## Quick start
 
@@ -56,9 +56,12 @@ spec:
 kubectl apply -f vm.yaml
 kubectl get svm -w          # Provisioning -> Starting -> Running, with IP
 ssh ubuntu@<IP>
+# from a pod: ping/ssh demo.kubesilicon.svc (namespace of the SiliconVM)
 kubectl patch svm demo --type=merge -p '{"spec":{"running":false}}'   # stop, keeps the disk
 kubectl delete svm demo     # stops the VM and removes its disk
 ```
+
+Stopping `kubesilicond` does **not** stop the VMs. Stop a VM with `running: false`. When the daemon starts again it picks the running VMs back up.
 
 The serial console output is in `~/.kubesilicon/vms/<namespace>_<name>/console.log`.
 
@@ -67,10 +70,11 @@ The serial console output is in `~/.kubesilicon/vms/<namespace>_<name>/console.l
 | Works | Not yet |
 |---|---|
 | Linux ARM64 guests, EFI boot, cloud images | macOS guests |
-| cloud-init (NoCloud ISO) | Service/DNS per VM (use `status.ip`) |
-| start, stop (ACPI, then forced), delete with finalizer | Interactive console, `kubesilicon` CLI |
+| cloud-init (NoCloud ISO) | Interactive console, `kubesilicon` CLI |
+| start, stop (ACPI, then forced), delete with finalizer | Start at login (LaunchAgent) |
 | Disk reuse across stop/start, qcow2 to raw conversion | Multiple Macs as nodes |
-| Pods reach the VM over NAT | Live migration, hotplug, snapshots, GPU |
+| Pods reach the VM over NAT, by IP or DNS name | Live migration, hotplug, snapshots, GPU |
+| One process per VM: the daemon can stop, restart or crash and VMs keep running | |
 
 Limits that come from Apple's framework: no live migration, no graphical console without a window. Nested virtualization in the guest exists on M3 and newer with macOS 15, but is not enabled yet. See [docs/design.md](docs/design.md) for the mapping to KubeVirt and the roadmap.
 

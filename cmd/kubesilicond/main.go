@@ -41,10 +41,14 @@ type daemon struct {
 	q    workqueue.TypedRateLimitingInterface[string]
 
 	mu  sync.Mutex
-	vms map[string]*vm.VM
+	vms map[string]*proc // launcher per VM; adopted from <dir>/pid after a daemon restart
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "launch" {
+		launch(os.Args[2:])
+		return
+	}
 	kubeconfig := flag.String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
 	kctx := flag.String("context", "", "kubeconfig context (required, avoids acting on the wrong cluster)")
 	root := flag.String("root", filepath.Join(os.Getenv("HOME"), ".kubesilicon"), "state directory")
@@ -63,7 +67,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	d := &daemon{c: c, root: *root, vms: map[string]*vm.VM{}, q: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())}
+	d := &daemon{c: c, root: *root, vms: map[string]*proc{}, q: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())}
 	for _, sub := range []string{"cache", "vms"} {
 		if err := os.MkdirAll(filepath.Join(d.root, sub), 0o755); err != nil {
 			log.Fatal(err)
@@ -86,7 +90,7 @@ func main() {
 	if !cache.WaitForCacheSync(ctx.Done(), inf.HasSynced) {
 		log.Fatal("CRD kubesilicon.io/v1 not found: apply config/crd first")
 	}
-	log.Printf("kubesilicond pronto (contexto %s)", *kctx)
+	log.Printf("kubesilicond ready (context %s)", *kctx)
 
 	go func() { <-ctx.Done(); d.q.ShutDown() }()
 	// ponytail: single worker, so provisioning (download) blocks other VMs. Add per-key workers if it hurts.
@@ -107,7 +111,7 @@ func main() {
 		}
 		d.q.Done(k)
 	}
-	d.shutdown()
+	log.Print("kubesilicond stopped; running VMs keep running")
 }
 
 func (d *daemon) dir(key string) string {
@@ -140,10 +144,8 @@ func (d *daemon) reconcile(ctx context.Context, key string) (time.Duration, erro
 	}
 
 	running, _, _ := unstructured.NestedBool(u.Object, "spec", "running")
-	d.mu.Lock()
-	v := d.vms[key]
-	d.mu.Unlock()
-	alive := v != nil && !closed(v.Done)
+	v := d.lookup(key)
+	alive := v != nil && v.alive()
 
 	switch {
 	case !running:
@@ -162,7 +164,7 @@ func (d *daemon) reconcile(ctx context.Context, key string) (time.Duration, erro
 		d.mu.Unlock()
 		return time.Second, nil
 	case !alive:
-		return 0, d.setStatus(ctx, api, u, "Stopped", "", "guest shut down; toggle spec.running to start it again")
+		return 0, d.setStatus(ctx, api, u, "Stopped", "", "VM process exited (guest shutdown or error, see launcher.log and console.log in "+d.dir(key)+"); toggle spec.running to start it again")
 	}
 	ip := lease.IP(lease.File, hostname(u))
 	if ip == "" {
@@ -171,7 +173,7 @@ func (d *daemon) reconcile(ctx context.Context, key string) (time.Duration, erro
 	return 0, d.setStatus(ctx, api, u, "Running", ip, "")
 }
 
-func (d *daemon) provision(key string, u *unstructured.Unstructured) (*vm.VM, error) {
+func (d *daemon) provision(key string, u *unstructured.Unstructured) (*proc, error) {
 	spec, _ := u.Object["spec"].(map[string]any)
 	src, _, _ := unstructured.NestedString(spec, "disk", "source")
 	if src == "" {
@@ -206,7 +208,7 @@ func (d *daemon) provision(key string, u *unstructured.Unstructured) (*vm.VM, er
 	if err := image.Seed(filepath.Join(dir, "seed"), iso, hostname(u), string(u.GetUID()), userData); err != nil {
 		return nil, err
 	}
-	return vm.Start(vm.Config{
+	return spawn(dir, vm.Config{
 		Disk: disk, Seed: iso, EFIVars: filepath.Join(dir, "efivars"), Console: filepath.Join(dir, "console.log"),
 		CPUs: uint(cpu), MemBytes: uint64(mem),
 	})
@@ -222,38 +224,27 @@ func hostname(u *unstructured.Unstructured) string {
 	return n + "-" + string(u.GetUID())[:8]
 }
 
-func (d *daemon) stop(key string) {
+// lookup returns the launcher for key, adopting a surviving one after a daemon restart.
+func (d *daemon) lookup(key string) *proc {
 	d.mu.Lock()
-	v := d.vms[key]
-	delete(d.vms, key)
-	d.mu.Unlock()
-	if v != nil {
-		v.Stop(20 * time.Second)
+	defer d.mu.Unlock()
+	if p := d.vms[key]; p != nil {
+		return p
 	}
+	if p := adopt(d.dir(key)); p != nil {
+		d.vms[key] = p
+		return p
+	}
+	return nil
 }
 
-func (d *daemon) shutdown() {
+func (d *daemon) stop(key string) {
+	p := d.lookup(key)
 	d.mu.Lock()
-	keys := make([]string, 0, len(d.vms))
-	for k := range d.vms {
-		keys = append(keys, k)
-	}
+	delete(d.vms, key)
 	d.mu.Unlock()
-	var wg sync.WaitGroup
-	for _, k := range keys {
-		wg.Add(1)
-		go func() { defer wg.Done(); d.stop(k) }()
-	}
-	wg.Wait()
-	// the cluster would keep saying "Running" until the daemon returns; mark Stopped before exiting.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	for _, k := range keys {
-		ns, name, _ := strings.Cut(k, "/")
-		api := d.c.Resource(gvr).Namespace(ns)
-		if u, err := api.Get(ctx, name, metav1.GetOptions{}); err == nil {
-			_ = d.setStatus(ctx, api, u, "Stopped", "", "kubesilicond stopped")
-		}
+	if p != nil {
+		p.stop()
 	}
 }
 
@@ -261,6 +252,11 @@ func (d *daemon) setStatus(ctx context.Context, api dynamic.ResourceInterface, u
 	cur, _, _ := unstructured.NestedStringMap(u.Object, "status")
 	if cur["phase"] == phase && cur["ip"] == ip && cur["message"] == msg {
 		return nil
+	}
+	if cur["ip"] != ip {
+		if err := d.syncDNS(ctx, u, ip); err != nil {
+			return err
+		}
 	}
 	u = u.DeepCopy()
 	if err := unstructured.SetNestedField(u.Object, map[string]any{"phase": phase, "ip": ip, "message": msg}, "status"); err != nil {
@@ -320,13 +316,4 @@ func remove(s []string, v string) []string {
 		}
 	}
 	return out
-}
-
-func closed(c chan struct{}) bool {
-	select {
-	case <-c:
-		return true
-	default:
-		return false
-	}
 }
