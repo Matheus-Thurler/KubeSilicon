@@ -90,6 +90,7 @@ func main() {
 	if !cache.WaitForCacheSync(ctx.Done(), inf.HasSynced) {
 		log.Fatal("CRD kubesilicon.io/v1 not found: apply config/crd first")
 	}
+	d.cleanup(inf.GetStore())
 	log.Printf("kubesilicond ready (context %s)", *kctx)
 
 	go func() { <-ctx.Done(); d.q.ShutDown() }()
@@ -195,6 +196,9 @@ func (d *daemon) provision(key string, u *unstructured.Unstructured) (*proc, err
 
 	dir := d.dir(key)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "uid"), []byte(u.GetUID()), 0o644); err != nil {
 		return nil, err
 	}
 	disk := filepath.Join(dir, "disk.raw")

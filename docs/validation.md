@@ -38,7 +38,20 @@ Unit tests cover the DHCP lease parser.
 - Delete: Service and EndpointSlice are garbage-collected and no launcher is left.
 - Client: `kubesilicon ip` matches `status.ip`, `kubesilicon ssh e2e -- echo` runs a command in the VM, and `kubesilicon console` (driven from a pipe) logs in over the serial socket with a cloud-init password and runs a command.
 
+- Orphan cleanup: with the daemon down, the finalizer is removed and the object deleted. When the daemon starts again, the VM directory is removed and the launcher is gone (this takes the guest-shutdown time, so the test waits up to 60 s).
+
 All e2e checks are hard assertions: a failed one exits non-zero.
+
+### LaunchAgent (manual test, not in the e2e script because it installs a login item)
+
+Installed with `hack/agent.sh install`, a VM created, then:
+
+- `launchctl kickstart -k`: the daemon restarts, the launcher keeps its pid, the object stays `Running` with the same IP.
+- `launchctl bootout` (agent removed): the launcher survives and SSH to the VM still works.
+- `kill -9` of the daemon: launchd starts a new one within seconds and it adopts the VM.
+- Delete of the object with the agent loaded: VM directory removed, no launcher left. Then `hack/agent.sh uninstall`: no process and no plist left.
+
+Not tested: an actual login/reboot.
 
 ## Bugs the e2e test found
 

@@ -94,4 +94,23 @@ assert "local state removed" test ! -d "$ROOT/vms/kubesilicon_e2e"
 for _ in $(seq 20); do $K get svc e2e >/dev/null 2>&1 || break; sleep 1; done
 if $K get svc e2e >/dev/null 2>&1; then echo "FAIL: service not garbage-collected"; exit 1; fi; echo "service garbage-collected"
 no_launcher "no launcher left"
+log "orphan cleanup: object removed while the daemon is down"
+$K apply -f - <<YAML
+apiVersion: kubesilicon.io/v1
+kind: SiliconVM
+metadata: { name: e2e }
+spec:
+  disk: { source: $IMG }
+YAML
+wait_phase Starting
+for _ in $(seq 30); do pgrep -f "[k]ubesilicond launch" >/dev/null && break; sleep 1; done
+stop_daemon
+pgrep -f "[k]ubesilicond launch" >/dev/null && echo "launcher alive while the daemon is down"
+$K patch svm e2e --type=merge -p '{"metadata":{"finalizers":[]}}'
+$K delete svm e2e --wait=true >/dev/null
+assert "state dir still there before cleanup" test -d "$ROOT/vms/kubesilicon_e2e"
+start_daemon
+for _ in $(seq 60); do [ -d "$ROOT/vms/kubesilicon_e2e" ] || break; sleep 1; done  # waits for the guest shutdown
+assert "orphan state removed" test ! -d "$ROOT/vms/kubesilicon_e2e"
+no_launcher "orphan launcher stopped"
 echo "E2E OK"

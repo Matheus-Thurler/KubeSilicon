@@ -64,6 +64,15 @@ kubectl delete svm demo     # stops the VM and removes its disk
 
 Stopping `kubesilicond` does **not** stop the VMs. Stop a VM with `running: false`. When the daemon starts again it picks the running VMs back up.
 
+## Start at login
+
+```sh
+hack/agent.sh install kind-<your-cluster>    # copies the daemon to ~/.kubesilicon/bin and loads a LaunchAgent
+hack/agent.sh uninstall                      # removes the agent; running VMs keep running
+```
+
+launchd restarts the daemon if it dies. The daemon's log is `~/.kubesilicon/kubesilicond.log`. Objects deleted while the daemon was down are cleaned up the next time it starts (their VM is shut down and its directory removed).
+
 ## Client
 
 ```sh
@@ -84,10 +93,11 @@ Serial output is also written to `~/.kubesilicon/vms/<namespace>_<name>/console.
 |---|---|
 | Linux ARM64 guests, EFI boot, cloud images | macOS guests |
 | cloud-init (NoCloud ISO), `kubesilicon` client (`ip`, `ssh`, `console`) | Windowed or VNC console |
-| start, stop (ACPI, then forced), delete with finalizer | Start at login (LaunchAgent) |
+| start, stop (ACPI, then forced), delete with finalizer | Automatic restart of a VM whose launcher died |
 | Disk reuse across stop/start, qcow2 to raw conversion | Multiple Macs as nodes |
 | Pods reach the VM over NAT, by IP or DNS name | Live migration, hotplug, snapshots, GPU |
 | One process per VM: the daemon can stop, restart or crash and VMs keep running | |
+| Start at login (LaunchAgent), orphan cleanup | |
 
 Limits that come from Apple's framework: no live migration, no graphical console without a window. Nested virtualization in the guest exists on M3 and newer with macOS 15, but is not enabled yet. See [docs/design.md](docs/design.md) for the mapping to KubeVirt and the roadmap.
 

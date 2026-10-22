@@ -41,6 +41,12 @@ delete -> stop VM -> remove ~/.kubesilicon/vms/<ns>_<name> -> drop finalizer (Se
 
 The daemon starts `kubesilicond launch ...` with `Setsid`, writes its pid to `<vm dir>/pid` and sends `SIGTERM` to stop it (the launcher asks the guest to shut down, waits up to 20 s, then forces). Stopping, restarting or killing the daemon leaves the launchers, and so the VMs, running. A new daemon reads the pid file and adopts a launcher only if the process is alive and its command line is `... launch ...` with the VM directory, which guards against pid reuse. If a launcher dies, the object goes to `Stopped` with a pointer to `launcher.log` and `console.log`.
 
+### Orphans and the LaunchAgent
+
+Each VM directory has a `uid` file with the UID of its object. On start, after the informer has synced, the daemon removes every directory whose object is gone or has another UID (deleted and recreated while the daemon was down), shutting its launcher down first. That can take up to ~25 s per VM, because the guest gets the chance to shut down cleanly.
+
+`hack/agent.sh` installs a LaunchAgent (`RunAtLoad`, `KeepAlive`, `AbandonProcessGroup`) that runs a copy of the daemon from `~/.kubesilicon/bin`, so launchd does not need access to the checkout (macOS protects `~/Documents`). `AbandonProcessGroup` plus the launchers' own session keep VMs alive when the agent is restarted or removed.
+
 ### DNS
 
 The daemon applies (server-side apply) a headless Service without selector and an EndpointSlice with the VM IP. The IP is added when the VM gets an address and removed when it stops. Both objects carry an ownerReference to the SiliconVM.
@@ -60,15 +66,14 @@ Guest hostname is `<name>-<first 8 chars of the UID>`. The VM IP comes from the 
 
 - **Phase 0, done:** prove boot, signing, cloud-init, NAT and pod-to-VM reachability. See [validation](validation.md).
 - **Phase 1, done:** CRD, reconciler, full lifecycle, end-to-end test.
-- **Phase 2, partly done:** one process per VM, DNS per VM and the `kubesilicon` client are done. Still open: LaunchAgent, orphan cleanup.
+- **Phase 2, done:** one process per VM, DNS per VM, the `kubesilicon` client, the LaunchAgent and orphan cleanup.
 - **Phase 3:** list what virtifoundry-style workloads use from KubeVirt and cover the gaps.
 - **Later:** several Macs as nodes (Virtual Kubelet), nested virtualization, snapshots, macOS guests.
 
 ## Known limits
 
 - One worker: provisioning a VM (a large download) delays the others.
-- If the launcher crashes the VM is gone and the object says `Stopped`; there is no automatic restart. Directories of objects deleted while the daemon was down are not cleaned up.
-- The Service has no ports (headless, name resolution only).
+- If the launcher crashes the VM is gone and the object says `Stopped`; there is no automatic restart. - The Service has no ports (headless, name resolution only).
 - Changing `cpu`, `memory` or `cloudInit` does not affect a VM that already exists. Stop and start does not re-read the CPU or memory.
 - No `conditions` yet, only `phase` and `message`.
 - Without `userData` the VM has no user you can log in with.
