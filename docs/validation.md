@@ -36,6 +36,9 @@ Unit tests cover the DHCP lease parser.
 - `kill -9` of the daemon: SSH still works, and the new daemon adopts the launcher.
 - `running: false` through the adopted launcher: object `Stopped`, IP cleared, EndpointSlice emptied, launcher process gone, disk kept.
 - Delete: Service and EndpointSlice are garbage-collected and no launcher is left.
+- Client: `kubesilicon ip` matches `status.ip`, `kubesilicon ssh e2e -- echo` runs a command in the VM, and `kubesilicon console` (driven from a pipe) logs in over the serial socket with a cloud-init password and runs a command.
+
+All e2e checks are hard assertions: a failed one exits non-zero.
 
 ## Bugs the e2e test found
 

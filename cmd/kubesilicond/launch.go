@@ -21,6 +21,7 @@ func launch(args []string) {
 	fs.StringVar(&c.Seed, "seed", "", "cloud-init ISO")
 	fs.StringVar(&c.EFIVars, "efi", "", "EFI variable store")
 	fs.StringVar(&c.Console, "console", "", "serial output file")
+	fs.StringVar(&c.Sock, "sock", "", "console unix socket")
 	fs.UintVar(&cpus, "cpus", 2, "vCPUs")
 	fs.Uint64Var(&c.MemBytes, "mem", 2<<30, "memory in bytes")
 	fs.Parse(args)

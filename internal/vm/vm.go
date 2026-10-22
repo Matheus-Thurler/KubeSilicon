@@ -3,24 +3,32 @@ package vm
 
 import (
 	"fmt"
+	"io"
+	"net"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/Code-Hex/vz/v3"
 )
 
 type Config struct {
-	Disk, Seed, EFIVars, Console string
-	CPUs                         uint
-	MemBytes                     uint64
+	Disk, Seed, EFIVars string
+	Console             string // serial output is appended here
+	Sock                string // unix socket for an interactive serial console (one client at a time)
+	CPUs                uint
+	MemBytes            uint64
 }
 
 type VM struct {
 	vm   *vz.VirtualMachine
 	Done chan struct{} // closed when the VM stops (guest shutdown, error or Stop)
-	in   *os.File      // serial input; the write end is never used
-	inW  *os.File
-	out  *os.File
+
+	files []io.Closer
+	ln    net.Listener
+
+	mu     sync.Mutex
+	client net.Conn // current console client, if any
 }
 
 func Start(c Config) (*VM, error) {
@@ -74,19 +82,36 @@ func Start(c Config) (*VM, error) {
 	nic.SetMACAddress(mac)
 	cfg.SetNetworkDevicesVirtualMachineConfiguration([]*vz.VirtioNetworkDeviceConfiguration{nic})
 
-	out, err := os.OpenFile(c.Console, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return nil, err
-	}
-	in, inW, err := os.Pipe()
-	if err != nil {
-		out.Close()
-		return nil, err
-	}
-	v := &VM{Done: make(chan struct{}), in: in, inW: inW, out: out}
+	v := &VM{Done: make(chan struct{})}
 	fail := func(err error) (*VM, error) { v.closeFiles(); return nil, err }
 
-	ser, err := vz.NewFileHandleSerialPortAttachment(in, out)
+	logf, err := os.OpenFile(c.Console, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	v.files = append(v.files, logf)
+	inR, inW, err := os.Pipe() // client -> guest
+	if err != nil {
+		return fail(err)
+	}
+	outR, outW, err := os.Pipe() // guest -> log file and client
+	if err != nil {
+		inR.Close()
+		inW.Close()
+		return fail(err)
+	}
+	v.files = append(v.files, inR, inW, outR, outW)
+	os.Remove(c.Sock)
+	if v.ln, err = net.Listen("unix", c.Sock); err != nil {
+		return fail(err)
+	}
+	if err := os.Chmod(c.Sock, 0o600); err != nil {
+		return fail(err)
+	}
+	go v.serve(inW)
+	go v.pump(outR, logf)
+
+	ser, err := vz.NewFileHandleSerialPortAttachment(inR, outW)
 	if err != nil {
 		return fail(err)
 	}
@@ -145,7 +170,63 @@ func (v *VM) Stop(timeout time.Duration) {
 }
 
 func (v *VM) closeFiles() {
-	v.in.Close()
-	v.inW.Close()
-	v.out.Close()
+	if v.ln != nil {
+		v.ln.Close()
+	}
+	v.mu.Lock()
+	if v.client != nil {
+		v.client.Close()
+	}
+	v.mu.Unlock()
+	for _, f := range v.files {
+		f.Close()
+	}
+}
+
+// serve connects console clients to the guest input. A new client replaces the old one.
+func (v *VM) serve(guestIn io.Writer) {
+	for {
+		c, err := v.ln.Accept()
+		if err != nil {
+			return
+		}
+		v.mu.Lock()
+		if v.client != nil {
+			v.client.Close()
+		}
+		v.client = c
+		v.mu.Unlock()
+		go func() {
+			io.Copy(guestIn, c)
+			v.mu.Lock()
+			if v.client == c {
+				v.client = nil
+			}
+			v.mu.Unlock()
+			c.Close()
+		}()
+	}
+}
+
+// pump copies guest output to the log file and to the console client. A slow client is dropped, never waited for.
+func (v *VM) pump(guestOut io.Reader, logf io.Writer) {
+	buf := make([]byte, 4096)
+	for {
+		n, err := guestOut.Read(buf)
+		if n > 0 {
+			logf.Write(buf[:n])
+			v.mu.Lock()
+			if v.client != nil {
+				v.client.SetWriteDeadline(time.Now().Add(200 * time.Millisecond))
+				if _, werr := v.client.Write(buf[:n]); werr != nil {
+					v.client.Close()
+					v.client = nil
+				}
+			}
+			v.mu.Unlock()
+		}
+		if err != nil {
+			return
+		}
+	}
 }

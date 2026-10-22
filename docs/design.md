@@ -23,6 +23,7 @@ kubesilicon gives a local Kubernetes cluster on a Mac the KubeVirt workflow (dec
 | VirtualMachine / VMI | `SiliconVM` | One kind. `spec.running` starts and stops. `status.phase`, `ip`, `message` |
 | DataVolume / CDI | `spec.disk.source` | URL or path. Downloaded, converted to raw, resized by the daemon |
 | cloud-init | `spec.cloudInit.userData` | NoCloud ISO with volume label `cidata` |
+| `virtctl console` / `ssh` | `kubesilicon console` / `ssh` / `ip` | Console talks to a unix socket the launcher serves in the VM directory. `ssh` and `ip` read `status.ip` through `kubectl` |
 | Service for the VM | headless Service + EndpointSlice | Same name as the SiliconVM, owned by it. Gives `<name>.<namespace>.svc` |
 
 There is one binary and no separate operator. The CRD is applied with `kubectl`. An operator can be added when there is something for it to do.
@@ -59,7 +60,7 @@ Guest hostname is `<name>-<first 8 chars of the UID>`. The VM IP comes from the 
 
 - **Phase 0, done:** prove boot, signing, cloud-init, NAT and pod-to-VM reachability. See [validation](validation.md).
 - **Phase 1, done:** CRD, reconciler, full lifecycle, end-to-end test.
-- **Phase 2, partly done:** one process per VM and DNS per VM are done. Still open: `kubesilicon` CLI (`console`, `ssh`, `ip`), LaunchAgent, orphan cleanup.
+- **Phase 2, partly done:** one process per VM, DNS per VM and the `kubesilicon` client are done. Still open: LaunchAgent, orphan cleanup.
 - **Phase 3:** list what virtifoundry-style workloads use from KubeVirt and cover the gaps.
 - **Later:** several Macs as nodes (Virtual Kubelet), nested virtualization, snapshots, macOS guests.
 
@@ -71,4 +72,4 @@ Guest hostname is `<name>-<first 8 chars of the UID>`. The VM IP comes from the 
 - Changing `cpu`, `memory` or `cloudInit` does not affect a VM that already exists. Stop and start does not re-read the CPU or memory.
 - No `conditions` yet, only `phase` and `message`.
 - Without `userData` the VM has no user you can log in with.
-- The console is a log file with no input.
+- The console is a text serial line: no window, no VNC. One client at a time; a new one replaces the old.

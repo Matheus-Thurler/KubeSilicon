@@ -209,7 +209,7 @@ func (d *daemon) provision(key string, u *unstructured.Unstructured) (*proc, err
 		return nil, err
 	}
 	return spawn(dir, vm.Config{
-		Disk: disk, Seed: iso, EFIVars: filepath.Join(dir, "efivars"), Console: filepath.Join(dir, "console.log"),
+		Disk: disk, Seed: iso, EFIVars: filepath.Join(dir, "efivars"), Console: filepath.Join(dir, "console.log"), Sock: filepath.Join(dir, "console.sock"),
 		CPUs: uint(cpu), MemBytes: uint64(mem),
 	})
 }

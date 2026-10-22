@@ -55,7 +55,8 @@ spec:
 ```sh
 kubectl apply -f vm.yaml
 kubectl get svm -w          # Provisioning -> Starting -> Running, with IP
-ssh ubuntu@<IP>
+make bin/kubesilicon        # the client
+./bin/kubesilicon -context kind-<your-cluster> ssh demo
 # from a pod: ping/ssh demo.kubesilicon.svc (namespace of the SiliconVM)
 kubectl patch svm demo --type=merge -p '{"spec":{"running":false}}'   # stop, keeps the disk
 kubectl delete svm demo     # stops the VM and removes its disk
@@ -63,14 +64,26 @@ kubectl delete svm demo     # stops the VM and removes its disk
 
 Stopping `kubesilicond` does **not** stop the VMs. Stop a VM with `running: false`. When the daemon starts again it picks the running VMs back up.
 
-The serial console output is in `~/.kubesilicon/vms/<namespace>_<name>/console.log`.
+## Client
+
+```sh
+export KUBESILICON_CONTEXT=kind-<your-cluster>     # or pass -context; there is no default on purpose
+kubesilicon ip demo                  # print the VM IP
+kubesilicon ssh demo                 # ssh as ubuntu; extra ssh args after --, user with -l
+kubesilicon ssh demo -- uname -a
+kubesilicon console demo             # serial console, leave with Ctrl-]
+```
+
+`console` needs a user with a password (cloud-init `plain_text_passwd` and `lock_passwd: false`). It is mostly for debugging boot problems; use `ssh` otherwise. The client calls `kubectl` for the lookup, so `kubectl` must be on the PATH. Host keys are not checked, because VM IPs get reused on a local lab.
+
+Serial output is also written to `~/.kubesilicon/vms/<namespace>_<name>/console.log`.
 
 ## What works and what does not
 
 | Works | Not yet |
 |---|---|
 | Linux ARM64 guests, EFI boot, cloud images | macOS guests |
-| cloud-init (NoCloud ISO) | Interactive console, `kubesilicon` CLI |
+| cloud-init (NoCloud ISO), `kubesilicon` client (`ip`, `ssh`, `console`) | Windowed or VNC console |
 | start, stop (ACPI, then forced), delete with finalizer | Start at login (LaunchAgent) |
 | Disk reuse across stop/start, qcow2 to raw conversion | Multiple Macs as nodes |
 | Pods reach the VM over NAT, by IP or DNS name | Live migration, hotplug, snapshots, GPU |

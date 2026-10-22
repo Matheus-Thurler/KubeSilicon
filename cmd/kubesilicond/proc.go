@@ -40,7 +40,7 @@ func spawn(dir string, c vm.Config) (*proc, error) {
 	}
 	defer logf.Close()
 	cmd := exec.Command(self, "launch",
-		"-disk", c.Disk, "-seed", c.Seed, "-efi", c.EFIVars, "-console", c.Console,
+		"-disk", c.Disk, "-seed", c.Seed, "-efi", c.EFIVars, "-console", c.Console, "-sock", c.Sock,
 		"-cpus", strconv.Itoa(int(c.CPUs)), "-mem", strconv.FormatUint(c.MemBytes, 10))
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
