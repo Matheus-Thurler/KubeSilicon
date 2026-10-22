@@ -1,0 +1,7 @@
+/bin/
+*.raw
+*.img
+*.qcow2
+*.iso
+efivars
+.DS_Store
