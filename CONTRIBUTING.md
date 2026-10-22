@@ -1,4 +1,4 @@
-# Contributing
+# Contributing to KubeSilicon
 
 Issues and pull requests are welcome. This is an early project, so open an issue before a large change.
 

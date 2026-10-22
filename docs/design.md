@@ -1,6 +1,6 @@
 # Design
 
-kubesilicon gives a local Kubernetes cluster on a Mac the KubeVirt workflow (declare a VM, get a VM) without KVM. The VM runs on the macOS host through `Virtualization.framework`. The cluster only stores the desired state.
+KubeSilicon gives a local Kubernetes cluster on a Mac the KubeVirt workflow (declare a VM, get a VM) without KVM. The VM runs on the macOS host through `Virtualization.framework`. The cluster only stores the desired state.
 
 ## Decisions
 
@@ -14,7 +14,7 @@ kubesilicon gives a local Kubernetes cluster on a Mac the KubeVirt workflow (dec
 
 ## Mapping to KubeVirt
 
-| KubeVirt | kubesilicon | Note |
+| KubeVirt | KubeSilicon | Note |
 |---|---|---|
 | virt-api (webhooks) | not needed | Validation is in the CRD schema |
 | virt-controller (creates the launcher pod) | not needed | There is no pod: the VM runs on the host |

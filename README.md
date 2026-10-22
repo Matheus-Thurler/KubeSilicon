@@ -1,8 +1,8 @@
-# kubesilicon
+# KubeSilicon
 
 Run Linux virtual machines from Kubernetes objects on a Mac with Apple Silicon, the way KubeVirt does on Linux.
 
-[KubeVirt](https://kubevirt.io) needs KVM, which does not exist on macOS. kubesilicon replaces the KVM layer with Apple's [`Virtualization.framework`](https://developer.apple.com/documentation/virtualization): you declare a `SiliconVM`, a daemon on the Mac boots it, and pods in your local cluster (kind, for example) can reach it over the network.
+[KubeVirt](https://kubevirt.io) needs KVM, which does not exist on macOS. KubeSilicon replaces the KVM layer with Apple's [`Virtualization.framework`](https://developer.apple.com/documentation/virtualization): you declare a `SiliconVM`, a daemon on the Mac boots it, and pods in your local cluster (kind, for example) can reach it over the network.
 
 > **Status: early.** It works end to end on one Mac with kind on Docker Desktop (see [docs/validation.md](docs/validation.md)). The API is `v1` in name only and will change. Not production software.
 
@@ -102,7 +102,7 @@ Contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Disclaimer
 
-kubesilicon is an independent project. It is not affiliated with or endorsed by Apple Inc. or the KubeVirt project. Apple, Mac, macOS and Apple Silicon are trademarks of Apple Inc. Running macOS guests is subject to Apple's license terms; this project only runs Linux guests.
+KubeSilicon is an independent project. It is not affiliated with or endorsed by Apple Inc. or the KubeVirt project. Apple, Mac, macOS and Apple Silicon are trademarks of Apple Inc. Running macOS guests is subject to Apple's license terms; this project only runs Linux guests.
 
 ## License
 
