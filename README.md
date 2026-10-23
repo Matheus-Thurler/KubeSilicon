@@ -25,10 +25,10 @@ Run Linux virtual machines from Kubernetes objects on a Mac with Apple Silicon, 
 Requirements: Apple Silicon Mac, macOS 13 or newer, Go, `qemu-img` (`brew install qemu`), a running kind cluster, `kubectl`.
 
 ```sh
-make bin/kubesilicond                                     # build and ad-hoc codesign
-kubectl apply -f config/crd/kubesilicon.io_siliconvms.yaml
-./bin/kubesilicond -context kind-<your-cluster>           # -context is required on purpose
+make install CTX=kind-<your-cluster>    # build, install the CRD, start the daemon at login
 ```
+
+`CTX` is required on purpose, so the daemon never acts on the wrong cluster. Undo with `make uninstall`.
 
 In another terminal:
 
@@ -66,12 +66,7 @@ Stopping `kubesilicond` does **not** stop the VMs. Stop a VM with `running: fals
 
 ## Start at login
 
-```sh
-hack/agent.sh install kind-<your-cluster>    # copies the daemon to ~/.kubesilicon/bin and loads a LaunchAgent
-hack/agent.sh uninstall                      # removes the agent; running VMs keep running
-```
-
-launchd restarts the daemon if it dies. The daemon's log is `~/.kubesilicon/kubesilicond.log`. Objects deleted while the daemon was down are cleaned up the next time it starts (their VM is shut down and its directory removed).
+`make install` copies the daemon to `~/.kubesilicon/bin` and loads a LaunchAgent. `make uninstall` removes the agent; running VMs keep running. launchd restarts the daemon if it dies. The daemon's log is `~/.kubesilicon/kubesilicond.log`. Objects deleted while the daemon was down are cleaned up the next time it starts (their VM is shut down and its directory removed).
 
 ## Client
 

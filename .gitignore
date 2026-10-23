@@ -5,3 +5,4 @@
 *.iso
 efivars
 .DS_Store
+media/

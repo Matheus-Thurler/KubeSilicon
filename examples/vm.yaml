@@ -1,0 +1,21 @@
+# Usage: SSH_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)" envsubst < examples/vm.yaml | kubectl apply -f -
+apiVersion: kubesilicon.io/v1
+kind: SiliconVM
+metadata:
+  name: demo
+spec:
+  cpu: 2
+  memory: 2Gi
+  disk:
+    # a cloud image: downloaded once, then cached
+    source: https://cloud-images.ubuntu.com/releases/noble/release/ubuntu-24.04-server-cloudimg-arm64.img
+    size: 10Gi
+  cloudInit:
+    # runs on first boot: creates the user and trusts your SSH key
+    userData: |
+      #cloud-config
+      users:
+        - name: ubuntu
+          sudo: ALL=(ALL) NOPASSWD:ALL
+          shell: /bin/bash
+          ssh_authorized_keys: ["${SSH_PUBKEY}"]
