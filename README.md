@@ -6,6 +6,10 @@ Run Linux virtual machines from Kubernetes objects on a Mac with Apple Silicon, 
 
 > **Status: early.** It works end to end on one Mac with kind on Docker Desktop (see [docs/validation.md](docs/validation.md)). The API is `v1` in name only and will change. Not production software.
 
+[![Tutorial video: install KubeSilicon from scratch, 3.5 min](docs/tutorial-thumb.png)](https://github.com/Matheus-Thurler/KubeSilicon/releases/download/tutorial-video/kubesilicon-tutorial.mp4)
+
+*Click to watch: kind cluster, install, first VM, ssh, pod to VM, stop/start (3.5 min).*
+
 ## How it works
 
 ```
