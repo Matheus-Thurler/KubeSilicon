@@ -59,7 +59,7 @@ func main() {
 			fatal(err)
 		}
 		// VM IPs get reused, so host keys would only produce noise on a local lab.
-		argv := append([]string{"ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", *user + "@" + ip}, rest...)
+		argv := append([]string{"ssh", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "LogLevel=ERROR", "-o", "ConnectTimeout=10", *user + "@" + ip}, rest...)
 		fatal(syscall.Exec(bin, argv, os.Environ()))
 	case "console":
 		fatal(console(filepath.Join(*root, "vms", namespace+"_"+name, "console.sock")))

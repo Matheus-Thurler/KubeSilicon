@@ -16,7 +16,8 @@ install)
   make -s bin/kubesilicond
   mkdir -p "$DEST" "$(dirname "$PLIST")"
   cp bin/kubesilicond "$DEST/kubesilicond"
-  codesign --force --sign - --entitlements hack/vz.entitlements "$DEST/kubesilicond"
+  codesign --force --sign - --entitlements hack/vz.entitlements "$DEST/kubesilicond" 2>/dev/null ||
+    codesign --force --sign - --entitlements hack/vz.entitlements "$DEST/kubesilicond"
   # AbandonProcessGroup: stopping the agent must not take the VM launchers down with it.
   cat >"$PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -38,13 +39,15 @@ install)
 </dict></plist>
 PLIST
   launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+  while launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; do sleep 0.5; done # bootout is async
   launchctl bootstrap "$DOMAIN" "$PLIST"
-  echo "installed: $LABEL (context $ctx), log in ~/.kubesilicon/kubesilicond.log"
+  echo "daemon running in the background (context $ctx). Log: ~/.kubesilicon/kubesilicond.log"
   ;;
 uninstall)
   launchctl bootout "$DOMAIN/$LABEL" 2>/dev/null || true
+  while launchctl print "$DOMAIN/$LABEL" >/dev/null 2>&1; do sleep 0.5; done
   rm -f "$PLIST"
-  echo "removed: $LABEL (running VMs keep running; binary left in $DEST)"
+  echo "daemon removed (running VMs keep running)"
   ;;
 *) echo "usage: hack/agent.sh install <kube-context> | uninstall" >&2; exit 2 ;;
 esac

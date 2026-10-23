@@ -55,7 +55,9 @@ func Start(c Config) (*VM, error) {
 		path string
 		ro   bool
 	}{{c.Disk, false}, {c.Seed, true}} {
-		att, err := vz.NewDiskImageStorageDeviceAttachment(d.path, d.ro)
+		// Cached is required: with the default or uncached mode, Linux guests on an M5 Pro
+		// (macOS 27) hit random kernel Oops and SIGILL in 3 of 4 boots (see docs/validation.md).
+		att, err := vz.NewDiskImageStorageDeviceAttachmentWithCacheAndSync(d.path, d.ro, vz.DiskImageCachingModeCached, vz.DiskImageSynchronizationModeFsync)
 		if err != nil {
 			return nil, err
 		}

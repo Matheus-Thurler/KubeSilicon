@@ -58,6 +58,15 @@ Not tested: an actual login/reboot.
 - **Stale DHCP lease.** `/var/db/dhcpd_leases` keeps leases of old VMs. With a fixed hostname, a new VM was reported at the IP of the previous one, and the pod ping failed. A restarted VM also reuses its lease without renewing the expiry, so "lease newer than before boot" does not work either. Fix: a hostname unique per object (`<name>-<uid8>`). The same change removes the collision between VMs with the same name in different namespaces.
 - **Check that could not fail.** A first version of the "launcher exited" assertions were written as `cmd && echo`, which never fails the script, and `pgrep -f` also matched the shell running the test. They are now hard checks with a pattern that does not match itself (`[k]ubesilicond`).
 - **Cluster context.** The default kubectl context was a different cluster. The daemon now requires `-context`, and every test command passes the context explicitly.
+- **Random guest crashes (disk caching mode).** Guests sometimes died 1 to 2 minutes after boot: `sshd` reset connections, the console login hung, the VM process sat at 200% CPU. With `console=hvc0` on the guest kernel the cause showed up: kernel `Oops` (NULL pointer in `seccomp_run_filters`, `pc: 0x0`) and `systemd` killed by `SIGILL`, i.e. corrupted code pages. Measured on an Apple M5 Pro, macOS 27.0.1, Ubuntu 24.04 kernel 6.8.0-147, 2 vCPU, 2 GiB, one fresh VM per run (crash = Oops, SIGILL, BUG or panic in the console log within 150 s):
+
+  | Disk attachment mode | Runs | Crashed |
+  |---|---|---|
+  | default (`NewDiskImageStorageDeviceAttachment`) | 4 | 3 |
+  | uncached, full sync | 4 | 4 |
+  | cached, fsync | 9 | 0 |
+
+  Fix: `DiskImageCachingModeCached` with `DiskImageSynchronizationModeFsync`. The root cause is not known; it is a guest or framework problem, not in this code. The numbers are small, so treat them as strong evidence, not proof.
 
 ## Not covered
 
