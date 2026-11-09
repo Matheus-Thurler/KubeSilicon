@@ -9,7 +9,7 @@ One Mac as a VM and GPU host for a Kubernetes cluster. It is a single machine: t
 | `kubesilicond` crashes or restarts | VMs and jobs keep running; the new daemon adopts them |
 | API server restarts | informers reconnect on their own |
 | Mac reboots during a job | the job is restarted, up to `spec.backoffLimit` times (default 2), then `Failed`. A script that exits non-zero is **not** retried |
-| Mac reboots with VMs | VMs with `spec.running: true` boot again when the daemon is back, with the same MAC and IP. Tested with `kill -9` of daemon and launcher, not a real power cycle. The guest loses writes it had not flushed yet (about 30 s), like any hard power-off |
+| Mac reboots with VMs | VMs with `spec.running: true` boot again when the daemon is back, with the same MAC and IP. Tested with `kill -9` of daemon and launcher. The guest loses writes it had not flushed yet (about 30 s), like any hard power-off |
 | Mac is off | jobs wait as `Pending`; the Kubeflow component gives up after `pending_timeout_seconds` (default 900) and deletes the job |
 | Job already `Succeeded`/`Failed` in the cluster | never run again |
 
@@ -44,3 +44,7 @@ A `SiliconJob` runs code on the Mac as the user of the daemon. Anyone who can cr
 - No per-job memory limit; the GPU and its unified memory are shared with the desktop. One GPU job runs at a time.
 - One Mac per cluster state directory (`~/.kubesilicon`); two daemons on different clusters need different `-root` values.
 - GPU for the VMs is not possible.
+
+## Tested after a real reboot (kind on Docker Desktop, FileVault session logged in)
+
+The LaunchAgent started the daemon at login and it kept retrying until Docker and the kind nodes were up (Docker was started by hand: autostart was off). A job that had already `Succeeded` was not rerun, and `hack/e2e-job.sh` passed afterwards. VMs were not running during this reboot, and a LaunchDaemon is still untested.
