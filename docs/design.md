@@ -138,6 +138,8 @@ Known gaps: `kfp-metadata-writer` has no arm64 image, so it is scaled to 0 (no l
 
 ## Known limits
 
+- One state directory per cluster. `kubesilicond` treats every directory under `~/.kubesilicon/vms` and `jobs` that has no object in *its* cluster as an orphan and removes it. Two daemons on different clusters must use different `-root` values.
+
 - One worker: provisioning a VM (a large download) delays the others.
 - If the launcher crashes the VM is gone and the object says `Stopped`; there is no automatic restart. - The Service has no ports (headless, name resolution only).
 - Changing `cpu`, `memory` or `cloudInit` does not affect a VM that already exists. Stop and start does not re-read the CPU or memory.
