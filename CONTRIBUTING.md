@@ -17,4 +17,4 @@ Issues and pull requests are welcome. This is an early project, so open an issue
 
 ## Commits
 
-[Conventional Commits](https://www.conventionalcommits.org): `feat:`, `fix:`, `docs:`, `test:`, `chore:`.
+[Conventional Commits](https://www.conventionalcommits.org): `feat:`, `fix:`, `docs:`, `test:`, `chore:`. Releases are automatic: release-please opens a "chore(main): release X" PR from these commits (`feat` bumps minor, `fix` patch, `feat!` or `BREAKING CHANGE` major once past 1.0); merging it tags and publishes the GitHub release.
