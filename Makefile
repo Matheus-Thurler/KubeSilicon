@@ -17,7 +17,7 @@ install:
 	@echo "1/3 building the daemon and the client"
 	@$(MAKE) -s bin/kubesilicond bin/kubesilicon
 	@echo "2/3 adding the SiliconVM type to the cluster $(CTX)"
-	@kubectl --context $(CTX) apply -f config/crd/kubesilicon.io_siliconvms.yaml
+	@kubectl --context $(CTX) apply -f config/crd/
 	@echo "3/3 starting the daemon in the background"
 	@hack/agent.sh install $(CTX)
 

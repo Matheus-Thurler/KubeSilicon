@@ -28,8 +28,15 @@ func (p *proc) stop() {
 	}
 }
 
-// spawn starts a detached launcher (own session) for the VM described by c.
-func spawn(dir string, c vm.Config) (*proc, error) {
+// spawnVM starts a detached launcher for the VM described by c.
+func spawnVM(dir string, c vm.Config) (*proc, error) {
+	return spawn(dir, "launch",
+		"-disk", c.Disk, "-seed", c.Seed, "-efi", c.EFIVars, "-console", c.Console, "-sock", c.Sock,
+		"-cpus", strconv.Itoa(int(c.CPUs)), "-mem", strconv.FormatUint(c.MemBytes, 10))
+}
+
+// spawn starts "kubesilicond <sub> args..." detached (own session), logging to <dir>/launcher.log.
+func spawn(dir, sub string, args ...string) (*proc, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return nil, err
@@ -39,9 +46,7 @@ func spawn(dir string, c vm.Config) (*proc, error) {
 		return nil, err
 	}
 	defer logf.Close()
-	cmd := exec.Command(self, "launch",
-		"-disk", c.Disk, "-seed", c.Seed, "-efi", c.EFIVars, "-console", c.Console, "-sock", c.Sock,
-		"-cpus", strconv.Itoa(int(c.CPUs)), "-mem", strconv.FormatUint(c.MemBytes, 10))
+	cmd := exec.Command(self, append([]string{sub}, args...)...)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -54,9 +59,9 @@ func spawn(dir string, c vm.Config) (*proc, error) {
 	return &proc{cmd.Process.Pid}, nil
 }
 
-// adopt returns the launcher recorded in <dir>/pid if it is still ours and alive.
+// adopt returns the process recorded in <dir>/pid if it is still ours (subcommand sub) and alive.
 // The command line check guards against pid reuse.
-func adopt(dir string) *proc {
+func adopt(dir, sub string) *proc {
 	b, err := os.ReadFile(filepath.Join(dir, "pid"))
 	if err != nil {
 		return nil
@@ -70,7 +75,7 @@ func adopt(dir string) *proc {
 		return nil
 	}
 	out, _ := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
-	if !strings.Contains(string(out), " launch ") || !strings.Contains(string(out), dir) {
+	if !strings.Contains(string(out), " "+sub+" ") || !strings.Contains(string(out), dir) {
 		return nil
 	}
 	return p
