@@ -7,7 +7,7 @@ from kfp import compiler, dsl
 
 
 @dsl.component(base_image="python:3.12-slim", packages_to_install=["kubernetes==31.0.0"])
-def silicon_job(script: str, dependencies: list, timeout_seconds: int = 1800) -> str:
+def silicon_job(script: str, dependencies: list, timeout_seconds: int = 1800, pending_timeout_seconds: int = 900) -> str:
     import time
     import uuid
 
@@ -22,7 +22,7 @@ def silicon_job(script: str, dependencies: list, timeout_seconds: int = 1800) ->
         "apiVersion": "kubesilicon.io/v1", "kind": "SiliconJob", "metadata": {"name": name},
         "spec": {"script": script, "dependencies": dependencies, "timeoutSeconds": timeout_seconds},
     })
-    shown, phase = 0, ""
+    shown, phase, waiting_since = 0, "", time.time()
     try:
         while True:
             st = api.get_namespaced_custom_object(*args, name).get("status", {})
@@ -33,6 +33,11 @@ def silicon_job(script: str, dependencies: list, timeout_seconds: int = 1800) ->
             phase = st.get("phase", "")
             if phase in ("Succeeded", "Failed", "Cancelled"):
                 break
+            if phase == "Running":
+                waiting_since = time.time()
+            elif time.time() - waiting_since > pending_timeout_seconds:
+                raise RuntimeError(f"SiliconJob {name} did not start in {pending_timeout_seconds}s "
+                                   f"(phase '{phase or 'none'}'): is kubesilicond running on the Mac?")
             time.sleep(3)
     finally:
         if phase not in ("Succeeded", "Failed", "Cancelled"):  # step killed: stop the Mac job too

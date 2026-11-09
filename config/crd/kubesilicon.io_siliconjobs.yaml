@@ -34,6 +34,7 @@ spec:
                   items: { type: string }
                   description: "argv run in the job work dir; 'python' resolves to the job venv"
                 timeoutSeconds: { type: integer, minimum: 1, default: 3600 }
+                backoffLimit: { type: integer, minimum: 0, default: 2, description: "retries when the runner is interrupted without a result (Mac reboot, kill); script failures are not retried" }
                 inputs:
                   type: array
                   items:
@@ -56,3 +57,4 @@ spec:
                 phase: { type: string }
                 message: { type: string }
                 logTail: { type: string, description: "last 4 KiB of the job log" }
+                attempts: { type: integer, description: "times the runner was interrupted and restarted" }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -73,12 +74,13 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	}
 
 	p := d.lookupJob(key)
+	ph, _, _ := unstructured.NestedString(u.Object, "status", "phase")
 	switch {
 	case p == nil && isFinal(u):
 		// The cluster says it already finished but the local result is gone (state dir removed, or
 		// another daemon cleaned it up). Never run it again; the recorded status stays.
 		return 0, nil
-	case p == nil:
+	case p == nil && ph != "Running":
 		// One GPU job at a time: the Mac GPU and its unified memory are shared with the desktop.
 		if d.gpuBusy(key) {
 			return 5 * time.Second, d.setJobStatus(ctx, api, u, "Pending", "waiting for the running job to finish")
@@ -91,11 +93,35 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 		d.jobs[key] = np
 		d.mu.Unlock()
 		return 2 * time.Second, d.setJobStatus(ctx, api, u, "Running", "")
-	case p.alive():
+	case p != nil && p.alive():
 		return 5 * time.Second, d.setJobStatus(ctx, api, u, "Running", "")
 	}
-	// The process is gone and wrote no exit file: crashed or killed.
-	return 0, d.setJobStatus(ctx, api, u, "Failed", "job process died without a result (see launcher.log in "+dir+")")
+	// The runner is gone and wrote no exit file: the Mac rebooted, or it was killed. Retry up to
+	// spec.backoffLimit times (script failures are not retried: they wrote an exit file).
+	n := attempts(u)
+	limit, ok, _ := unstructured.NestedInt64(u.Object, "spec", "backoffLimit")
+	if !ok {
+		limit = 2
+	}
+	if int64(n) >= limit {
+		return 0, d.setJobStatus(ctx, api, u, "Failed", fmt.Sprintf("interrupted %d time(s) without a result, giving up (see launcher.log in %s)", n+1, dir))
+	}
+	for _, f := range []string{"venv", "work", "pid", "exit"} {
+		os.RemoveAll(filepath.Join(dir, f))
+	}
+	if f, err := os.OpenFile(filepath.Join(dir, "job.log"), os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+		fmt.Fprintf(f, "[kubesilicon] interrupted, retry %d of %d\n", n+1, limit)
+		f.Close()
+	}
+	d.mu.Lock()
+	delete(d.jobs, key)
+	d.mu.Unlock()
+	return time.Second, d.setJobStatusN(ctx, api, u, "Pending", fmt.Sprintf("interrupted, retry %d of %d", n+1, limit), n+1)
+}
+
+func attempts(u *unstructured.Unstructured) int {
+	n, _, _ := unstructured.NestedInt64(u.Object, "status", "attempts")
+	return int(n)
 }
 
 func (d *daemon) startJob(dir string, u *unstructured.Unstructured) (*proc, error) {
@@ -172,13 +198,17 @@ func readExit(dir string) (code int, msg string, done bool) {
 const logTail = 4096
 
 func (d *daemon) setJobStatus(ctx context.Context, api dynamic.ResourceInterface, u *unstructured.Unstructured, phase, msg string) error {
+	return d.setJobStatusN(ctx, api, u, phase, msg, attempts(u))
+}
+
+func (d *daemon) setJobStatusN(ctx context.Context, api dynamic.ResourceInterface, u *unstructured.Unstructured, phase, msg string, n int) error {
 	tail := readTail(filepath.Join(d.jobDir(u.GetNamespace()+"/"+u.GetName()), "job.log"), logTail)
-	cur, _, _ := unstructured.NestedStringMap(u.Object, "status")
-	if cur["phase"] == phase && cur["message"] == msg && cur["logTail"] == tail {
+	cur, _, _ := unstructured.NestedMap(u.Object, "status")
+	if cur["phase"] == phase && cur["message"] == msg && cur["logTail"] == tail && attempts(u) == n {
 		return nil
 	}
 	u = u.DeepCopy()
-	if err := unstructured.SetNestedField(u.Object, map[string]any{"phase": phase, "message": msg, "logTail": tail}, "status"); err != nil {
+	if err := unstructured.SetNestedField(u.Object, map[string]any{"phase": phase, "message": msg, "logTail": tail, "attempts": int64(n)}, "status"); err != nil {
 		return err
 	}
 	_, err := api.UpdateStatus(ctx, u, metav1.UpdateOptions{})

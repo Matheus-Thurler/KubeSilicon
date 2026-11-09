@@ -1,0 +1,42 @@
+# Least-privilege identity for kubesilicond. It needs no access to pods, secrets or nodes.
+apiVersion: v1
+kind: Namespace
+metadata: { name: kubesilicon-system }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata: { name: kubesilicond, namespace: kubesilicon-system }
+---
+# Long-lived token for a daemon that runs outside the cluster (revoke by deleting this Secret).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kubesilicond-token
+  namespace: kubesilicon-system
+  annotations: { kubernetes.io/service-account.name: kubesilicond }
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata: { name: kubesilicond }
+rules:
+  - apiGroups: [kubesilicon.io]
+    resources: [siliconvms, siliconjobs]
+    verbs: [get, list, watch, patch, update]
+  - apiGroups: [kubesilicon.io]
+    resources: [siliconvms/status, siliconjobs/status, siliconvms/finalizers, siliconjobs/finalizers]
+    verbs: [get, patch, update]
+  # DNS for VMs: a headless Service plus an EndpointSlice per SiliconVM (server-side apply).
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [get, create, patch]
+  - apiGroups: [discovery.k8s.io]
+    resources: [endpointslices]
+    verbs: [get, create, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: { name: kubesilicond }
+roleRef: { apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: kubesilicond }
+subjects:
+  - { kind: ServiceAccount, name: kubesilicond, namespace: kubesilicon-system }

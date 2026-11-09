@@ -100,7 +100,7 @@ python examples/kubeflow/pipeline.py        # needs `pip install kfp`; writes tr
 kubectl --context kind-kubeflow -n kubeflow port-forward svc/ml-pipeline-ui 8080:80   # upload the YAML at http://localhost:8080
 ```
 
-The `silicon_job` component in `examples/kubeflow/pipeline.py` creates a `SiliconJob` and waits for it; the job log appears in the step log. Jobs survive a daemon restart. Needs [`uv`](https://docs.astral.sh/uv/). See [docs/design.md](docs/design.md).
+The `silicon_job` component in `examples/kubeflow/pipeline.py` creates a `SiliconJob` and waits for it; the job log appears in the step log. Jobs survive a daemon restart and are retried if the Mac reboots (`backoffLimit`). To run this beyond a laptop lab, read [docs/production.md](docs/production.md). Needs [`uv`](https://docs.astral.sh/uv/). See [docs/design.md](docs/design.md).
 
 ## Start at login
 
