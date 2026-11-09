@@ -104,7 +104,7 @@ The `silicon_job` component in `examples/kubeflow/pipeline.py` creates a `Silico
 
 ## Start at login
 
-`make install` copies the daemon to `~/.kubesilicon/bin` and loads a LaunchAgent. `make uninstall` removes the agent; running VMs keep running. launchd restarts the daemon if it dies. The daemon's log is `~/.kubesilicon/kubesilicond.log`. Objects deleted while the daemon was down are cleaned up the next time it starts (their VM is shut down and its directory removed).
+`make install` copies the daemon to `~/.kubesilicon/bin` and loads a LaunchAgent. `make uninstall` removes the agent; running VMs keep running. launchd restarts the daemon if it dies. After a real Mac reboot the daemon is back at login and waits for the API server, so with kind on Docker Desktop turn on "Start Docker Desktop when you sign in"; nothing else needs a manual start. The daemon's log is `~/.kubesilicon/kubesilicond.log`. Objects deleted while the daemon was down are cleaned up the next time it starts (their VM is shut down and its directory removed).
 
 ## Client
 
