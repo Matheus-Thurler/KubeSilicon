@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/Matheus-Thurler/KubeSilicon/compare/v0.2.0...v0.3.0) (2026-11-09)
+
+
+### Features
+
+* Fashion-MNIST pipeline with data, GPU training and evaluation ([5265fa0](https://github.com/Matheus-Thurler/KubeSilicon/commit/5265fa0a00c00388685c22e4ca322fbd54b12e94))
+* Fashion-MNIST pipeline with data, GPU training and evaluation ([1271984](https://github.com/Matheus-Thurler/KubeSilicon/commit/12719846f3cd0ff4dbd82ea0e03b2dfe92e02752))
+
 ## [0.2.0](https://github.com/Matheus-Thurler/KubeSilicon/compare/v0.1.0...v0.2.0) (2026-11-09)
 
 
