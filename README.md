@@ -91,6 +91,15 @@ kubectl patch sjob train --type=merge -p '{"spec":{"running":false}}'   # cancel
 hack/e2e-job.sh kind-<cluster>                                          # end-to-end test
 ```
 
+### MLX
+
+`kubectl apply -f examples/mlx-matmul.yaml` runs the same job with MLX. Measured on an M5 Pro (one run, float32 4096x4096 matmul, inside the sandbox):
+
+| | per matmul | TFLOPS |
+|---|---|---|
+| GPU (Metal) | 8.2 ms | 16.7 |
+| CPU | 69 ms | 2.0 |
+
 ### With Kubeflow Pipelines
 
 ```sh
