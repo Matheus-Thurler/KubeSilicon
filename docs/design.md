@@ -99,6 +99,10 @@ Goal: Kubeflow steps and training jobs in the local kind cluster use the Mac GPU
 | Sandbox | none | `internal/sandbox`: builds the `sandbox-exec` profile behind a small interface |
 | Artifacts | none | `internal/artifact`: MinIO download and upload using the cluster Secret |
 
+### Status
+
+Phases 1, 2 and the artifact half of 3 are implemented and covered by `hack/e2e-job.sh` (sandbox, timeout, cancel, one-job queue, artifacts, path escape) plus a daemon-restart check. Validated on this Mac (M5 Pro): Metal/MPS works from a detached process and inside the `sandbox-exec` profile. Not done: the Kubeflow side (pipeline component, `make kind-kubeflow`), per-job memory limits, S3 credentials from a Secret (artifacts use presigned URLs instead), `runtime: mlx` (use `dependencies: [mlx]`).
+
 ### Phases
 
 1. **Minimal `SiliconJob`.** Runs a command, writes `status` and `job.log`. Proves PyTorch MPS works end to end. Validate here that the Metal device is reachable from a detached process.
@@ -123,7 +127,8 @@ Goal: Kubeflow steps and training jobs in the local kind cluster use the Mac GPU
 
 ### Open points
 
-- Metal inside a `sandbox-exec` profile is untested. It decides whether Phase 2 holds.
+- Metal inside a `sandbox-exec` profile: tested, works (see Status). Re-test on each macOS update.
+- The sandbox allows `stat` on the home directory (needed to `exec` anything under it), so file names can be probed but not read or listed. Network stays open, so a job can still send what it can read (its own work dir) out.
 - How the Kubeflow component reaches the daemon is only the CRD for now (it creates the object). Reading logs back into the pipeline UI is not designed.
 - Several Macs and a fleet are out of scope, as for VMs.
 

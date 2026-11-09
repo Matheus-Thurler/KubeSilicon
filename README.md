@@ -66,6 +66,33 @@ kubectl delete svm demo     # stops the VM and removes its disk
 
 Stopping `kubesilicond` does **not** stop the VMs. Stop a VM with `running: false`. When the daemon starts again it picks the running VMs back up.
 
+## GPU jobs (SiliconJob)
+
+A Linux guest cannot reach the Mac GPU, so GPU work runs natively on macOS. A `SiliconJob` runs a Python script in its own `uv` venv, inside a `sandbox-exec` profile (writes only in the job directory, no reads of your home), with PyTorch MPS or MLX. One job runs at a time; the others wait as `Pending`.
+
+```yaml
+apiVersion: kubesilicon.io/v1
+kind: SiliconJob
+metadata: { name: train }
+spec:
+  dependencies: [torch]          # binary wheels only
+  timeoutSeconds: 3600
+  inputs:  [{ url: "https://.../data.csv", path: data.csv }]      # GET before the job
+  outputs: [{ url: "https://.../model.pt?X-Amz-...", path: model.pt }]  # PUT after (presigned)
+  script: |
+    import torch
+    print(torch.backends.mps.is_available())
+```
+
+```sh
+kubectl get sjob -w
+kubesilicon -context kind-<cluster> logs train
+kubectl patch sjob train --type=merge -p '{"spec":{"running":false}}'   # cancel
+hack/e2e-job.sh kind-<cluster>                                          # end-to-end test
+```
+
+Jobs survive a daemon restart. Needs [`uv`](https://docs.astral.sh/uv/). See [docs/design.md](docs/design.md).
+
 ## Start at login
 
 `make install` copies the daemon to `~/.kubesilicon/bin` and loads a LaunchAgent. `make uninstall` removes the agent; running VMs keep running. launchd restarts the daemon if it dies. The daemon's log is `~/.kubesilicon/kubesilicond.log`. Objects deleted while the daemon was down are cleaned up the next time it starts (their VM is shut down and its directory removed).

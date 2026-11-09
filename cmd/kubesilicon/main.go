@@ -19,6 +19,7 @@ const usage = `usage: kubesilicon [-context C] [-n NAMESPACE] <command> NAME [ar
   ip NAME                  print the VM IP
   ssh NAME [-- ssh args]   ssh to the VM (default user ubuntu, see -l)
   console NAME             serial console, leave with Ctrl-]
+  logs NAME                print the log of a SiliconJob (-n default: "default")
 
 flags:
 `
@@ -40,6 +41,16 @@ func main() {
 		rest = rest[1:]
 	}
 
+	if cmd == "logs" {
+		n := *ns
+		if n == "" {
+			n = "default"
+		}
+		b, err := os.ReadFile(filepath.Join(*root, "jobs", n+"_"+name, "job.log"))
+		fatal(err)
+		os.Stdout.Write(b)
+		return
+	}
 	namespace, ip, err := lookup(*kctx, *ns, name)
 	if err != nil {
 		fatal(err)

@@ -40,13 +40,19 @@ type daemon struct {
 	root string // ~/.kubesilicon
 	q    workqueue.TypedRateLimitingInterface[string]
 
-	mu  sync.Mutex
-	vms map[string]*proc // launcher per VM; adopted from <dir>/pid after a daemon restart
+	mu   sync.Mutex
+	vms  map[string]*proc // launcher per VM; adopted from <dir>/pid after a daemon restart
+	jobs map[string]*proc // runner per SiliconJob, same model
+	jq   workqueue.TypedRateLimitingInterface[string]
 }
 
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "launch" {
 		launch(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 2 && os.Args[1] == "runjob" {
+		runjob(os.Args[2])
 		return
 	}
 	kubeconfig := flag.String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
@@ -67,8 +73,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	d := &daemon{c: c, root: *root, vms: map[string]*proc{}, q: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())}
-	for _, sub := range []string{"cache", "vms"} {
+	newQ := func() workqueue.TypedRateLimitingInterface[string] {
+		return workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())
+	}
+	d := &daemon{c: c, root: *root, vms: map[string]*proc{}, jobs: map[string]*proc{}, q: newQ(), jq: newQ()}
+	for _, sub := range []string{"cache", "vms", "jobs"} {
 		if err := os.MkdirAll(filepath.Join(d.root, sub), 0o755); err != nil {
 			log.Fatal(err)
 		}
@@ -91,9 +100,25 @@ func main() {
 		log.Fatal("CRD kubesilicon.io/v1 not found: apply config/crd first")
 	}
 	d.cleanup(inf.GetStore())
+
+	jinf := dynamicinformer.NewFilteredDynamicSharedInformerFactory(c, 30*time.Second, metav1.NamespaceAll, nil).ForResource(jobGVR).Informer()
+	jenqueue := func(o any) {
+		if k, err := cache.DeletionHandlingMetaNamespaceKeyFunc(o); err == nil {
+			d.jq.Add(k)
+		}
+	}
+	jinf.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc: jenqueue, UpdateFunc: func(_, n any) { jenqueue(n) }, DeleteFunc: jenqueue,
+	})
+	go jinf.Run(ctx.Done())
+	if !cache.WaitForCacheSync(ctx.Done(), jinf.HasSynced) {
+		log.Fatal("CRD siliconjobs.kubesilicon.io not found: apply config/crd first")
+	}
+	d.cleanupJobs(jinf.GetStore())
+	go d.runJobs()
 	log.Printf("kubesilicond ready (context %s)", *kctx)
 
-	go func() { <-ctx.Done(); d.q.ShutDown() }()
+	go func() { <-ctx.Done(); d.q.ShutDown(); d.jq.ShutDown() }()
 	// ponytail: single worker, so provisioning (download) blocks other VMs. Add per-key workers if it hurts.
 	for {
 		k, shutdown := d.q.Get()
@@ -113,6 +138,27 @@ func main() {
 		d.q.Done(k)
 	}
 	log.Print("kubesilicond stopped; running VMs keep running")
+}
+
+// runJobs is its own worker: a job runs for a long time and must not block VM reconciles.
+func (d *daemon) runJobs() {
+	for {
+		k, shutdown := d.jq.Get()
+		if shutdown {
+			return
+		}
+		after, err := d.reconcileJob(context.Background(), k)
+		switch {
+		case err != nil:
+			log.Printf("job %s: %v", k, err)
+			d.jq.AddRateLimited(k)
+		case after > 0:
+			d.jq.AddAfter(k, after)
+		default:
+			d.jq.Forget(k)
+		}
+		d.jq.Done(k)
+	}
 }
 
 func (d *daemon) dir(key string) string {
@@ -212,7 +258,7 @@ func (d *daemon) provision(key string, u *unstructured.Unstructured) (*proc, err
 	if err := image.Seed(filepath.Join(dir, "seed"), iso, hostname(u), string(u.GetUID()), userData); err != nil {
 		return nil, err
 	}
-	return spawn(dir, vm.Config{
+	return spawnVM(dir, vm.Config{
 		Disk: disk, Seed: iso, EFIVars: filepath.Join(dir, "efivars"), Console: filepath.Join(dir, "console.log"), Sock: filepath.Join(dir, "console.sock"),
 		CPUs: uint(cpu), MemBytes: uint64(mem),
 	})
@@ -235,7 +281,7 @@ func (d *daemon) lookup(key string) *proc {
 	if p := d.vms[key]; p != nil {
 		return p
 	}
-	if p := adopt(d.dir(key)); p != nil {
+	if p := adopt(d.dir(key), "launch"); p != nil {
 		d.vms[key] = p
 		return p
 	}
