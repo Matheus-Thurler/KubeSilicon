@@ -6,3 +6,6 @@
 efivars
 .DS_Store
 media/
+__pycache__/
+*.pyc
+examples/kubeflow/*.yaml

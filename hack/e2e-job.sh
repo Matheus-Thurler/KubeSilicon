@@ -54,6 +54,24 @@ wait_phase e2e-long Cancelled
 wait_phase e2e-queued Succeeded
 ok "cancel works and the queue moves on"
 
+# interruption (what a Mac reboot looks like: runner and script vanish without a result)
+kill_job() { pkill -9 -f "jobs/default_$1" || true; }
+mk e2e-retry "  script: |
+    import time; time.sleep(8); print('survived the interruption')"
+wait_phase e2e-retry Running; sleep 3; kill_job e2e-retry
+wait_phase e2e-retry Succeeded
+[ "$(k get sjob e2e-retry -o jsonpath='{.status.attempts}')" = 1 ]
+log e2e-retry | grep -q "interrupted, retry 1 of 2"
+ok "interrupted job is retried and counted"
+
+mk e2e-giveup "  backoffLimit: 0
+  script: |
+    import time; time.sleep(30)"
+wait_phase e2e-giveup Running; sleep 3; kill_job e2e-giveup
+wait_phase e2e-giveup Failed
+k get sjob e2e-giveup -o jsonpath='{.status.message}' | grep -q "giving up"
+ok "backoffLimit 0 gives up"
+
 # artifacts: a tiny HTTP server that serves in.txt and stores PUTs
 D=$(mktemp -d); echo "hello" >"$D/in.txt"
 python3 -I - "$D" >/dev/null 2>&1 <<'PY' &

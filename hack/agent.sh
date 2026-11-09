@@ -1,6 +1,6 @@
 #!/bin/bash
 # Run kubesilicond at login as a LaunchAgent.
-# Usage: hack/agent.sh install <kube-context> | uninstall
+# Usage: hack/agent.sh install <kube-context> [kubeconfig] | uninstall
 # The binary is copied to ~/.kubesilicon/bin so launchd does not need access to this checkout
 # (macOS protects ~/Documents and similar folders).
 set -euo pipefail
@@ -12,7 +12,8 @@ DOMAIN=gui/$(id -u)
 
 case "${1:-}" in
 install)
-  ctx=${2:?usage: hack/agent.sh install <kube-context>}
+  ctx=${2:?usage: hack/agent.sh install <kube-context> [kubeconfig]}
+  kcfg=${3:-}
   make -s bin/kubesilicond
   mkdir -p "$DEST" "$(dirname "$PLIST")"
   cp bin/kubesilicond "$DEST/kubesilicond"
@@ -25,7 +26,7 @@ install)
 <plist version="1.0"><dict>
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key><array>
-    <string>$DEST/kubesilicond</string><string>-context</string><string>$ctx</string>
+    <string>$DEST/kubesilicond</string><string>-context</string><string>$ctx</string>${kcfg:+<string>-kubeconfig</string><string>$kcfg</string>}
   </array>
   <key>EnvironmentVariables</key><dict>
     <key>PATH</key><string>$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
