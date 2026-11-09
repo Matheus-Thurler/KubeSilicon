@@ -74,6 +74,10 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 
 	p := d.lookupJob(key)
 	switch {
+	case p == nil && isFinal(u):
+		// The cluster says it already finished but the local result is gone (state dir removed, or
+		// another daemon cleaned it up). Never run it again; the recorded status stays.
+		return 0, nil
 	case p == nil:
 		// One GPU job at a time: the Mac GPU and its unified memory are shared with the desktop.
 		if d.gpuBusy(key) {
@@ -195,4 +199,9 @@ func readTail(path string, n int64) string {
 	}
 	b, _ := io.ReadAll(f)
 	return strings.ToValidUTF8(string(b), "")
+}
+
+func isFinal(u *unstructured.Unstructured) bool {
+	ph, _, _ := unstructured.NestedString(u.Object, "status", "phase")
+	return ph == "Succeeded" || ph == "Failed" || ph == "Cancelled"
 }
