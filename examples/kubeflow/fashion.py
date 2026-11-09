@@ -12,7 +12,8 @@ BASE = ["boto3==1.35.99", "numpy==2.1.3"]
 
 
 @dsl.component(base_image="python:3.12-slim", packages_to_install=BASE)
-def prepare_data(prefix: str, s3: str = "http://seaweedfs.kubeflow:8333"):
+def prepare_data(run_id: str, s3: str = "http://seaweedfs.kubeflow:8333"):
+    prefix = f"study/fashion-{run_id}"
     import gzip
     import io
     import urllib.request
@@ -35,7 +36,8 @@ def prepare_data(prefix: str, s3: str = "http://seaweedfs.kubeflow:8333"):
 
 
 @dsl.component(base_image="python:3.12-slim", packages_to_install=BASE)
-def presign(prefix: str, mac_s3: str) -> NamedTuple("o", [("inputs", list), ("outputs", list)]):
+def presign(run_id: str, mac_s3: str) -> NamedTuple("o", [("inputs", list), ("outputs", list)]):
+    prefix = f"study/fashion-{run_id}"
     import os
     import boto3
     from botocore.config import Config
@@ -70,7 +72,8 @@ np.savez("model.npz", w0=w[0], b0=w[1], w1=w[2], b1=w[3])
 
 
 @dsl.component(base_image="python:3.12-slim", packages_to_install=BASE)
-def evaluate(prefix: str, metrics: dsl.Output[dsl.Metrics], s3: str = "http://seaweedfs.kubeflow:8333"):
+def evaluate(run_id: str, metrics: dsl.Output[dsl.Metrics], s3: str = "http://seaweedfs.kubeflow:8333"):
+    prefix = f"study/fashion-{run_id}"
     import io
     import os
     import boto3
@@ -93,12 +96,12 @@ def secrets(task):
 
 @dsl.pipeline(name="fashion-mnist-on-mac-gpu")
 def fashion(lr: float = 0.001, epochs: int = 5, mac_s3: str = "http://localhost:8333"):
-    prefix = "study/fashion-" + dsl.PIPELINE_JOB_ID_PLACEHOLDER
-    data = secrets(prepare_data(prefix=prefix))
-    urls = secrets(presign(prefix=prefix, mac_s3=mac_s3)).after(data)
+    run_id = dsl.PIPELINE_JOB_ID_PLACEHOLDER
+    data = secrets(prepare_data(run_id=run_id))
+    urls = secrets(presign(run_id=run_id, mac_s3=mac_s3)).after(data)
     train = silicon_job(script=TRAIN.replace("LR", str(lr)).replace("EPOCHS", str(epochs)), dependencies=["torch", "numpy"],
                         inputs=urls.outputs["inputs"], outputs=urls.outputs["outputs"])
-    secrets(evaluate(prefix=prefix)).after(train)
+    secrets(evaluate(run_id=run_id)).after(train)
 
 
 if __name__ == "__main__":
