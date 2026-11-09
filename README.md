@@ -111,6 +111,17 @@ kubectl --context kind-kubeflow -n kubeflow port-forward svc/ml-pipeline-ui 8080
 
 The `silicon_job` component in `examples/kubeflow/pipeline.py` creates a `SiliconJob` and waits for it; the job log appears in the step log. Jobs survive a daemon restart and are retried if the Mac reboots (`backoffLimit`). To run this beyond a laptop lab, read [docs/production.md](docs/production.md). Needs [`uv`](https://docs.astral.sh/uv/). See [docs/design.md](docs/design.md).
 
+### Training example: Fashion-MNIST
+
+`examples/kubeflow/fashion.py` is a 3-step pipeline: `prepare_data` (pod) puts the dataset in the KFP SeaweedFS, `silicon_job` trains on the Mac GPU (PyTorch MPS) and `evaluate` (pod) scores the model on CPU. The Mac job gets its data and returns the model through presigned URLs (`inputs` / `outputs` of the `SiliconJob`).
+
+```sh
+kubectl -n kubeflow port-forward svc/seaweedfs 8333:8333     # the Mac reaches the bucket here
+python examples/kubeflow/fashion.py                           # needs `pip install kfp kfp-kubernetes boto3`; writes fashion.yaml
+```
+
+Upload `fashion.yaml` in the KFP UI. Measured on an M5 Pro with Docker Desktop (5 epochs, 784-256-10 MLP): trained in 1.4 s on `mps`, test accuracy 0.8645 (the same number the training reported, so the artifacts round-trip intact).
+
 ## Start at login
 
 `make install` copies the daemon to `~/.kubesilicon/bin` and loads a LaunchAgent. `make uninstall` removes the agent; running VMs keep running. launchd restarts the daemon if it dies. After a real Mac reboot the daemon is back at login and waits for the API server, so with kind on Docker Desktop turn on "Start Docker Desktop when you sign in"; nothing else needs a manual start. The daemon's log is `~/.kubesilicon/kubesilicond.log`. Objects deleted while the daemon was down are cleaned up the next time it starts (their VM is shut down and its directory removed).
