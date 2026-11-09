@@ -70,6 +70,63 @@ Guest hostname is `<name>-<first 8 chars of the UID>`. The VM IP comes from the 
 - **Phase 3:** list what virtifoundry-style workloads use from KubeVirt and cover the gaps.
 - **Later:** several Macs as nodes (Virtual Kubelet), nested virtualization, snapshots, macOS guests.
 
+## Plan: native GPU jobs (`SiliconJob`)
+
+Goal: Kubeflow steps and training jobs in the local kind cluster use the Mac GPU. A Linux guest under `Virtualization.framework` cannot reach Metal compute (no CUDA, no MPS), so the VM is the wrong place. The job runs as a native macOS process (PyTorch MPS, MLX) and Kubeflow only orchestrates it.
+
+### Decisions
+
+| Topic | Decision |
+|---|---|
+| Source | Kubeflow in the local kind cluster. The homelab cluster (over Tailscale) comes later |
+| API | New kind `SiliconJob` in `kubesilicon.io/v1`, handled by the same `kubesilicond` |
+| Execution | Native process in a per-job Python environment (venv/uv). Dependencies declared in the object. No container, because a Linux container loses the GPU |
+| Isolation | Per-job work directory plus `sandbox-exec` limiting writes to it. Runs as the user. Dedicated macOS user is the fallback |
+| Data | The daemon downloads inputs from the Kubeflow object store (MinIO) before the job and uploads outputs after. User code only sees local files and never gets credentials |
+
+### Mapping to the current code
+
+| Piece | Today | Change |
+|---|---|---|
+| CRD | `config/crd/kubesilicon.io_siliconvms.yaml` | Add `siliconjobs.yaml`; `make install` applies both |
+| Informer and queue | One `gvr`, one queue, one worker in `main.go` | Second informer and queue for `siliconjobs`. Do not share the VM worker: a job runs for hours |
+| Reconcile | `reconcile` for VMs | New `reconcileJob`: phases `Pending`, `Running`, `Succeeded`, `Failed` plus `message` |
+| Process | `proc.go` `spawn`/`adopt`, subcommand `launch` | Parametrize the subcommand (`adopt` matches `" launch "`) and add `runjob`. Same survive-the-daemon model, state in `~/.kubesilicon/jobs/<ns>_<name>/` |
+| Launcher | `launch.go` owns one VM | New `runjob.go`: sets up the work dir, runs the command, writes `exit` and `job.log` |
+| Orphans | `cleanup.go` scans `vms/` | Same pass for `jobs/`, with the UID file check |
+| Client | `kubesilicon ip/ssh/console` | Add `kubesilicon logs <job>` that reads `job.log`; `cancel` is `spec.running: false` |
+| Python env | none | `internal/pyenv`: create venv with `uv`, shared wheel cache |
+| Sandbox | none | `internal/sandbox`: builds the `sandbox-exec` profile behind a small interface |
+| Artifacts | none | `internal/artifact`: MinIO download and upload using the cluster Secret |
+
+### Phases
+
+1. **Minimal `SiliconJob`.** Runs a command, writes `status` and `job.log`. Proves PyTorch MPS works end to end. Validate here that the Metal device is reachable from a detached process.
+2. **Environment and isolation.** `uv` venv per job, wheel cache, `sandbox-exec` profile, timeout (default set) and cancel. Validate that the profile still allows Metal.
+3. **Artifacts and Kubeflow.** MinIO in and out, a Kubeflow pipeline component that creates the `SiliconJob`, `make kind-kubeflow` with a `kindest/node` image the Kubeflow release supports.
+4. **Hardening.** One GPU job at a time (simple queue) with `nice`, per-job memory limit (unified memory is shared with the desktop), pause the queue, optional `runtime: torch-mps | mlx`, then a Virtual Kubelet node or the homelab cluster.
+
+### Risks and mitigations
+
+| Risk | Mitigation | Phase |
+|---|---|---|
+| `sandbox-exec` is deprecated | Keep it behind `internal/sandbox`; fall back to a dedicated macOS user. Re-test on each macOS update | 2 |
+| Ops without MPS fall back to CPU | `PYTORCH_ENABLE_MPS_FALLBACK=1` by default, log when it happens, offer MLX | 1-2 |
+| Docker Desktop memory is small (3.8 GB seen) | `make` checks the Docker memory and warns below 12 GB | 1 |
+| Kubeflow needs an older k8s than latest | `make kind-kubeflow` pins the node image; `-context` stays required | 3 |
+| Job competes with the desktop | GPU queue of 1, low `nice`, memory limit, pause | 4 |
+| Hung or orphan job | Mandatory default timeout, `cancel`, orphan cleanup at daemon start | 2-4 |
+| MinIO credentials | Daemon reads the Secret; user code never sees it | 3 |
+| Slow per-job environments | Shared `uv` wheel cache | 2 |
+| Daemon dies with a job running | One process per job, adopted again at start (same as VMs) | 1-2 |
+| Pipelines written for x86 or CUDA | Document that jobs use macOS arm64 wheels | 3 |
+
+### Open points
+
+- Metal inside a `sandbox-exec` profile is untested. It decides whether Phase 2 holds.
+- How the Kubeflow component reaches the daemon is only the CRD for now (it creates the object). Reading logs back into the pipeline UI is not designed.
+- Several Macs and a fleet are out of scope, as for VMs.
+
 ## Known limits
 
 - One worker: provisioning a VM (a large download) delays the others.
