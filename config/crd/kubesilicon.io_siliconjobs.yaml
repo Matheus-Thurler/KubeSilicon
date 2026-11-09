@@ -55,3 +55,4 @@ spec:
               properties:
                 phase: { type: string }
                 message: { type: string }
+                logTail: { type: string, description: "last 4 KiB of the job log" }

@@ -101,7 +101,11 @@ Goal: Kubeflow steps and training jobs in the local kind cluster use the Mac GPU
 
 ### Status
 
-Phases 1, 2 and the artifact half of 3 are implemented and covered by `hack/e2e-job.sh` (sandbox, timeout, cancel, one-job queue, artifacts, path escape) plus a daemon-restart check. Validated on this Mac (M5 Pro): Metal/MPS works from a detached process and inside the `sandbox-exec` profile. Not done: the Kubeflow side (pipeline component, `make kind-kubeflow`), per-job memory limits, S3 credentials from a Secret (artifacts use presigned URLs instead), `runtime: mlx` (use `dependencies: [mlx]`).
+Phases 1 to 3 are implemented and tested on an M5 Pro Mac: `hack/e2e-job.sh` (sandbox, timeout, cancel, one-job queue, artifacts, path escape), a daemon-restart check, and a Kubeflow Pipelines 2.18.0 run (`examples/kubeflow/pipeline.py`) whose step created a `SiliconJob` that trained a small model on `mps`. Metal/MPS works from a detached process and inside the `sandbox-exec` profile.
+
+How it fits together: the KFP step is a pod in kind; it creates a `SiliconJob` through the Kubernetes API (RBAC in `examples/kubeflow/rbac.yaml`) and polls `status`. `kubesilicond` runs the script on macOS and mirrors the phase and the last 4 KiB of the log into `status.logTail`, so the step log shows the Mac output. `hack/kind-kubeflow.sh` builds the whole cluster (k8s 1.34, cert-manager, KFP, CRDs).
+
+Known gaps: `kfp-metadata-writer` has no arm64 image, so it is scaled to 0 (no lineage metadata in the UI, pipelines run); artifacts use presigned URLs, not the SeaweedFS Secret (KFP 2.18 ships SeaweedFS, not MinIO); no per-job memory limit (macOS has no cgroups); `status.logTail` is visible to anyone who can read the object; the pipeline step cannot return files from the job yet.
 
 ### Phases
 
