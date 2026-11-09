@@ -100,6 +100,15 @@ hack/e2e-job.sh kind-<cluster>                                          # end-to
 | GPU (Metal) | 8.2 ms | 16.7 |
 | CPU | 69 ms | 2.0 |
 
+`examples/bench-cnn.yaml` trains the same small CNN (2 conv layers, Fashion-MNIST, 5 epochs, same seed) on both devices. One run on an M5 Pro, with the kind cluster running at the same time and the job at `nice 10`:
+
+| | 5 epochs | test accuracy |
+|---|---|---|
+| MPS | 7.7 s | 0.9008 |
+| CPU | 40.5 s | 0.9007 |
+
+About 5x faster on the GPU, same accuracy. The small MLP in the pipeline example is too small to tell the two apart.
+
 ### With Kubeflow Pipelines
 
 ```sh

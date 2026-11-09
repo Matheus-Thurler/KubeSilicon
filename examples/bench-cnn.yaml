@@ -1,0 +1,36 @@
+# Same CNN, same data, same seed: MPS vs CPU. Downloads Fashion-MNIST (26 MB) itself.
+apiVersion: kubesilicon.io/v1
+kind: SiliconJob
+metadata: { name: bench-cnn }
+spec:
+  dependencies: [torch, numpy]
+  script: |
+    import gzip, time, urllib.request, numpy as np, torch
+    from torch import nn
+    host = "http://fashion-mnist.s3-website.eu-central-1.amazonaws.com/"
+    get = lambda n: gzip.decompress(urllib.request.urlopen(host + n, timeout=120).read())
+    img = lambda n: np.frombuffer(get(n), np.uint8, offset=16).reshape(-1, 1, 28, 28)
+    lab = lambda n: np.frombuffer(get(n), np.uint8, offset=8)
+    xtr, ytr = img("train-images-idx3-ubyte.gz"), lab("train-labels-idx1-ubyte.gz")
+    xte, yte = img("t10k-images-idx3-ubyte.gz"), lab("t10k-labels-idx1-ubyte.gz")
+    def run(dev, epochs=5, bs=256):
+        torch.manual_seed(0)
+        f = lambda a: torch.tensor(a, dtype=torch.float32, device=dev) / 255
+        X, Xt = f(xtr), f(xte)
+        Y, Yt = (torch.tensor(a, dtype=torch.long, device=dev) for a in (ytr, yte))
+        m = nn.Sequential(nn.Conv2d(1, 32, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+                          nn.Conv2d(32, 64, 3, padding=1), nn.ReLU(), nn.MaxPool2d(2),
+                          nn.Flatten(), nn.Linear(64 * 49, 128), nn.ReLU(), nn.Linear(128, 10)).to(dev)
+        opt = torch.optim.Adam(m.parameters(), 1e-3)
+        t = time.time()
+        for ep in range(epochs):
+            p = torch.randperm(len(X), device=dev)
+            for i in range(0, len(p), bs):
+                b = p[i:i + bs]
+                loss = nn.functional.cross_entropy(m(X[b]), Y[b]); opt.zero_grad(); loss.backward(); opt.step()
+            if dev == "mps": torch.mps.synchronize()
+        dt = time.time() - t
+        with torch.no_grad():
+            acc = sum((m(Xt[i:i + 1000]).argmax(1) == Yt[i:i + 1000]).sum().item() for i in range(0, len(Xt), 1000)) / len(Xt)
+        print(f"{dev}: {dt:.1f}s for {epochs} epochs, test accuracy {acc:.4f}", flush=True)
+    run("mps"); run("cpu")
