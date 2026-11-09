@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -77,7 +79,7 @@ func Start(c Config) (*VM, error) {
 	if err != nil {
 		return nil, err
 	}
-	mac, err := vz.NewRandomLocallyAdministeredMACAddress()
+	mac, err := stableMAC(filepath.Join(filepath.Dir(c.Disk), "mac"))
 	if err != nil {
 		return nil, err
 	}
@@ -231,4 +233,19 @@ func (v *VM) pump(guestOut io.Reader, logf io.Writer) {
 			return
 		}
 	}
+}
+
+// stableMAC keeps the NIC's MAC across boots: cloud-init's netplan matches the
+// first boot's MAC, so a random MAC per launch leaves the guest without network.
+func stableMAC(path string) (*vz.MACAddress, error) {
+	if b, err := os.ReadFile(path); err == nil {
+		if hw, err := net.ParseMAC(strings.TrimSpace(string(b))); err == nil {
+			return vz.NewMACAddress(hw)
+		}
+	}
+	mac, err := vz.NewRandomLocallyAdministeredMACAddress()
+	if err != nil {
+		return nil, err
+	}
+	return mac, os.WriteFile(path, []byte(mac.String()+"\n"), 0o644)
 }
