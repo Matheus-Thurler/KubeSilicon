@@ -1,0 +1,17 @@
+apiVersion: kubesilicon.io/v1
+kind: SiliconJob
+metadata: { name: mlx-matmul }
+spec:
+  dependencies: [mlx]
+  script: |
+    import time, mlx.core as mx
+    print("device:", mx.default_device(), "metal:", mx.metal.is_available())
+    n = 4096
+    a = mx.random.normal((n, n)); b = mx.random.normal((n, n)); mx.eval(a, b)
+    for dev in (mx.gpu, mx.cpu):
+        with mx.stream(dev):
+            mx.eval(a @ b)
+            t = time.time()
+            for _ in range(10): mx.eval(a @ b)
+            dt = (time.time() - t) / 10
+        print(dev, f"{dt*1000:.1f} ms/matmul", f"{2*n**3/dt/1e12:.2f} TFLOPS")
