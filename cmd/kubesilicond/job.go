@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"os"
 	"path/filepath"
@@ -61,14 +62,14 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 		default:
 			phase = "Failed"
 		}
-		return 0, setJobStatus(ctx, api, u, phase, msg)
+		return 0, d.setJobStatus(ctx, api, u, phase, msg)
 	}
 
 	running, ok, _ := unstructured.NestedBool(u.Object, "spec", "running")
 	if ok && !running {
 		d.stopJob(key)
 		os.WriteFile(filepath.Join(dir, "exit"), []byte("130 cancelled by spec.running=false"), 0o644)
-		return 0, setJobStatus(ctx, api, u, "Cancelled", "cancelled by spec.running=false")
+		return 0, d.setJobStatus(ctx, api, u, "Cancelled", "cancelled by spec.running=false")
 	}
 
 	p := d.lookupJob(key)
@@ -76,21 +77,21 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	case p == nil:
 		// One GPU job at a time: the Mac GPU and its unified memory are shared with the desktop.
 		if d.gpuBusy(key) {
-			return 5 * time.Second, setJobStatus(ctx, api, u, "Pending", "waiting for the running job to finish")
+			return 5 * time.Second, d.setJobStatus(ctx, api, u, "Pending", "waiting for the running job to finish")
 		}
 		np, err := d.startJob(dir, u)
 		if err != nil {
-			return 0, setJobStatus(ctx, api, u, "Failed", err.Error())
+			return 0, d.setJobStatus(ctx, api, u, "Failed", err.Error())
 		}
 		d.mu.Lock()
 		d.jobs[key] = np
 		d.mu.Unlock()
-		return 2 * time.Second, setJobStatus(ctx, api, u, "Running", "")
+		return 2 * time.Second, d.setJobStatus(ctx, api, u, "Running", "")
 	case p.alive():
-		return 5 * time.Second, setJobStatus(ctx, api, u, "Running", "")
+		return 5 * time.Second, d.setJobStatus(ctx, api, u, "Running", "")
 	}
 	// The process is gone and wrote no exit file: crashed or killed.
-	return 0, setJobStatus(ctx, api, u, "Failed", "job process died without a result (see launcher.log in "+dir+")")
+	return 0, d.setJobStatus(ctx, api, u, "Failed", "job process died without a result (see launcher.log in "+dir+")")
 }
 
 func (d *daemon) startJob(dir string, u *unstructured.Unstructured) (*proc, error) {
@@ -163,13 +164,17 @@ func readExit(dir string) (code int, msg string, done bool) {
 	return code, m, true
 }
 
-func setJobStatus(ctx context.Context, api dynamic.ResourceInterface, u *unstructured.Unstructured, phase, msg string) error {
+// logTail is how a pod in the cluster (a Kubeflow step) can see the job output, which lives on the Mac.
+const logTail = 4096
+
+func (d *daemon) setJobStatus(ctx context.Context, api dynamic.ResourceInterface, u *unstructured.Unstructured, phase, msg string) error {
+	tail := readTail(filepath.Join(d.jobDir(u.GetNamespace()+"/"+u.GetName()), "job.log"), logTail)
 	cur, _, _ := unstructured.NestedStringMap(u.Object, "status")
-	if cur["phase"] == phase && cur["message"] == msg {
+	if cur["phase"] == phase && cur["message"] == msg && cur["logTail"] == tail {
 		return nil
 	}
 	u = u.DeepCopy()
-	if err := unstructured.SetNestedField(u.Object, map[string]any{"phase": phase, "message": msg}, "status"); err != nil {
+	if err := unstructured.SetNestedField(u.Object, map[string]any{"phase": phase, "message": msg, "logTail": tail}, "status"); err != nil {
 		return err
 	}
 	_, err := api.UpdateStatus(ctx, u, metav1.UpdateOptions{})
@@ -177,4 +182,17 @@ func setJobStatus(ctx context.Context, api dynamic.ResourceInterface, u *unstruc
 		log.Printf("job %s/%s: %s %s", u.GetNamespace(), u.GetName(), phase, msg)
 	}
 	return err
+}
+
+func readTail(path string, n int64) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err == nil && st.Size() > n {
+		f.Seek(-n, io.SeekEnd)
+	}
+	b, _ := io.ReadAll(f)
+	return strings.ToValidUTF8(string(b), "")
 }

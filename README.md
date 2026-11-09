@@ -91,7 +91,16 @@ kubectl patch sjob train --type=merge -p '{"spec":{"running":false}}'   # cancel
 hack/e2e-job.sh kind-<cluster>                                          # end-to-end test
 ```
 
-Jobs survive a daemon restart. Needs [`uv`](https://docs.astral.sh/uv/). See [docs/design.md](docs/design.md).
+### With Kubeflow Pipelines
+
+```sh
+hack/kind-kubeflow.sh                       # kind (k8s 1.34) + cert-manager + KFP 2.18 + CRDs + RBAC; needs Docker with 12 GB
+./bin/kubesilicond -context kind-kubeflow   # or: make install CTX=kind-kubeflow
+python examples/kubeflow/pipeline.py        # needs `pip install kfp`; writes train_on_mac_gpu.yaml
+kubectl --context kind-kubeflow -n kubeflow port-forward svc/ml-pipeline-ui 8080:80   # upload the YAML at http://localhost:8080
+```
+
+The `silicon_job` component in `examples/kubeflow/pipeline.py` creates a `SiliconJob` and waits for it; the job log appears in the step log. Jobs survive a daemon restart. Needs [`uv`](https://docs.astral.sh/uv/). See [docs/design.md](docs/design.md).
 
 ## Start at login
 
