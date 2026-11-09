@@ -7,7 +7,8 @@ from kfp import compiler, dsl
 
 
 @dsl.component(base_image="python:3.12-slim", packages_to_install=["kubernetes==31.0.0"])
-def silicon_job(script: str, dependencies: list, timeout_seconds: int = 1800, pending_timeout_seconds: int = 900) -> str:
+def silicon_job(script: str, dependencies: list, timeout_seconds: int = 1800, pending_timeout_seconds: int = 900,
+                inputs: list = [], outputs: list = []) -> str:
     import time
     import uuid
 
@@ -20,7 +21,8 @@ def silicon_job(script: str, dependencies: list, timeout_seconds: int = 1800, pe
     name = f"kfp-{uuid.uuid4().hex[:8]}"
     api.create_namespaced_custom_object(*args, {
         "apiVersion": "kubesilicon.io/v1", "kind": "SiliconJob", "metadata": {"name": name},
-        "spec": {"script": script, "dependencies": dependencies, "timeoutSeconds": timeout_seconds},
+        "spec": {"script": script, "dependencies": dependencies, "timeoutSeconds": timeout_seconds,
+                 "inputs": inputs, "outputs": outputs},
     })
     shown, phase, waiting_since = 0, "", time.time()
     try:
