@@ -30,6 +30,6 @@ Run with `kubectl apply -f examples/bench/torch.yaml` and `examples/bench/mlx.ya
 
 - **Small work does not pay.** At 1024x1024 the CPU is as fast or faster: each GPU op has a fixed launch cost. The GPU wins once the work is big enough (2048 and up here).
 - **MLX was faster than PyTorch MPS on the same matmul** (4096: 8.1 ms against 23.6 ms) and on the transformer step. Do not read this as "MLX is 3x faster": the transformer implementations differ in details (normalization, attention kernels), so those two rows are not a like-for-like model comparison. The matmul rows are the cleanest comparison.
-- The PyTorch CPU path uses the Accelerate/AMX backend and reaches about 1.8 TFLOPS in fp32; MLX on the CPU reaches 2.0. Both are far from the 6 to 17 TFLOPS of the GPU.
+- On the CPU, PyTorch reaches about 1.8 TFLOPS in fp32 and MLX about 2.0. Both are far from the 6 to 17 TFLOPS of the GPU.
 - Earlier numbers in the README (one run, 8.2 ms against 69 ms; CNN 7.7 s against 40.5 s) are consistent with these.
 - Not measured: fp16/bf16, memory use, power, long training runs, and thermal throttling over several minutes.
