@@ -1,6 +1,6 @@
 # KubeSilicon
 
-Run Linux virtual machines from Kubernetes objects on a Mac with Apple Silicon, the way KubeVirt does on Linux.
+Run Linux virtual machines from Kubernetes objects on a Mac with Apple Silicon, the way KubeVirt does on Linux. It also runs GPU jobs natively on the Mac (PyTorch MPS or MLX) from a `SiliconJob` object, so a Kubeflow Pipelines step can train on the Apple GPU: see [GPU jobs](#gpu-jobs-siliconjob) and [benchmarks](docs/benchmarks.md).
 
 [KubeVirt](https://kubevirt.io) needs KVM, which does not exist on macOS. KubeSilicon replaces the KVM layer with Apple's [`Virtualization.framework`](https://developer.apple.com/documentation/virtualization): you declare a `SiliconVM`, a daemon on the Mac boots it, and pods in your local cluster (kind, for example) can reach it over the network.
 
@@ -107,7 +107,7 @@ hack/e2e-job.sh kind-<cluster>                                          # end-to
 | MPS | 7.7 s | 0.9008 |
 | CPU | 40.5 s | 0.9007 |
 
-About 5x faster on the GPU, same accuracy. The small MLP in the pipeline example is too small to tell the two apart.
+About 5x faster on the GPU, same accuracy. The small MLP in the pipeline example is too small to tell the two apart. For three more benchmarks each on PyTorch and MLX (median of 5, with the cases where the CPU wins), see [docs/benchmarks.md](docs/benchmarks.md).
 
 ### With Kubeflow Pipelines
 
@@ -122,7 +122,7 @@ The `silicon_job` component in `examples/kubeflow/pipeline.py` creates a `Silico
 
 ### Training example: Fashion-MNIST
 
-`examples/kubeflow/fashion.py` is a 3-step pipeline: `prepare_data` (pod) puts the dataset in the KFP SeaweedFS, `silicon_job` trains on the Mac GPU (PyTorch MPS) and `evaluate` (pod) scores the model on CPU. The Mac job gets its data and returns the model through presigned URLs (`inputs` / `outputs` of the `SiliconJob`).
+`examples/kubeflow/fashion.py` is a 4-step pipeline: `prepare_data` (pod) puts the dataset in the KFP SeaweedFS, `presign` (pod) creates the presigned URLs, `silicon_job` trains on the Mac GPU (PyTorch MPS) and `evaluate` (pod) scores the model on CPU. The Mac job gets its data and returns the model through presigned URLs (`inputs` / `outputs` of the `SiliconJob`).
 
 ```sh
 kubectl -n kubeflow port-forward svc/seaweedfs 8333:8333     # the Mac reaches the bucket here
