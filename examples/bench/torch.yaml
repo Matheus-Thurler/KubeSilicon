@@ -1,0 +1,45 @@
+# PyTorch: MPS vs CPU, 3 benchmarks, median of 5 runs each (after 2 warmups). Synthetic data, no downloads.
+apiVersion: kubesilicon.io/v1
+kind: SiliconJob
+metadata: { name: bench-torch }
+spec:
+  dependencies: [torch]
+  timeoutSeconds: 1800
+  script: |
+    import time, statistics, platform, subprocess, torch
+    from torch import nn
+    def sync(d):
+        if d == "mps": torch.mps.synchronize()
+    def med(fn, d, n=5):
+        for _ in range(2): fn(); sync(d)
+        t = []
+        for _ in range(n):
+            s = time.perf_counter(); fn(); sync(d); t.append(time.perf_counter() - s)
+        return statistics.median(t), min(t), max(t)
+    def row(name, d, sec, unit, work):
+        m, lo, hi = sec
+        print(f"RESULT {name} {d} median={m*1000:.1f}ms min={lo*1000:.1f} max={hi*1000:.1f} {work/m:.1f} {unit}", flush=True)
+    print("chip:", subprocess.run(["/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True).stdout.strip(), "torch", torch.__version__)
+    print("load:", subprocess.run(["/usr/bin/uptime"], capture_output=True, text=True).stdout.strip())
+    for d in ("mps", "cpu"):
+        torch.manual_seed(0)
+        # 1. matmul sweep, fp32
+        for n in (1024, 2048, 4096):
+            a = torch.randn(n, n, device=d); b = torch.randn(n, n, device=d)
+            row(f"matmul{n}", d, med(lambda: a @ b, d), "GFLOPS", 2 * n**3 / 1e9)
+        # 2. ResNet-style block training step, batch 64, 3x32x32
+        blk = nn.Sequential(nn.Conv2d(3, 64, 3, padding=1), nn.BatchNorm2d(64), nn.ReLU(),
+                            nn.Conv2d(64, 128, 3, padding=1, stride=2), nn.BatchNorm2d(128), nn.ReLU(),
+                            nn.Conv2d(128, 256, 3, padding=1, stride=2), nn.BatchNorm2d(256), nn.ReLU(),
+                            nn.AdaptiveAvgPool2d(1), nn.Flatten(), nn.Linear(256, 10)).to(d)
+        x = torch.randn(64, 3, 32, 32, device=d); y = torch.randint(0, 10, (64,), device=d)
+        opt = torch.optim.SGD(blk.parameters(), 0.01)
+        def step():
+            opt.zero_grad(); nn.functional.cross_entropy(blk(x), y).backward(); opt.step()
+        row("convnet_train_step", d, med(step, d), "img/s", 64)
+        # 3. Transformer encoder, seq 128, d_model 512, batch 16: forward + backward
+        enc = nn.TransformerEncoder(nn.TransformerEncoderLayer(512, 8, 2048, batch_first=True), 4).to(d)
+        t = torch.randn(16, 128, 512, device=d)
+        def tstep():
+            enc.zero_grad(); enc(t).sum().backward()
+        row("transformer_fwd_bwd", d, med(tstep, d), "tok/s", 16 * 128)

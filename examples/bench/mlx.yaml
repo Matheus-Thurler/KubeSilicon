@@ -1,0 +1,43 @@
+# MLX: GPU vs CPU, 3 benchmarks, median of 5 runs each (after 2 warmups). Synthetic data, no downloads.
+apiVersion: kubesilicon.io/v1
+kind: SiliconJob
+metadata: { name: bench-mlx }
+spec:
+  dependencies: [mlx]
+  timeoutSeconds: 1800
+  script: |
+    import time, statistics, subprocess
+    import mlx.core as mx, mlx.nn as nn, mlx.optimizers as optim
+    def med(fn, n=5):
+        for _ in range(2): fn()
+        t = []
+        for _ in range(n):
+            s = time.perf_counter(); fn(); t.append(time.perf_counter() - s)
+        return statistics.median(t), min(t), max(t)
+    def row(name, d, sec, unit, work):
+        m, lo, hi = sec
+        print(f"RESULT {name} {d} median={m*1000:.1f}ms min={lo*1000:.1f} max={hi*1000:.1f} {work/m:.1f} {unit}", flush=True)
+    print("chip:", subprocess.run(["/usr/sbin/sysctl", "-n", "machdep.cpu.brand_string"], capture_output=True, text=True).stdout.strip(), "mlx", mx.__version__)
+    print("load:", subprocess.run(["/usr/bin/uptime"], capture_output=True, text=True).stdout.strip())
+    for name, dev in (("gpu", mx.gpu), ("cpu", mx.cpu)):
+        with mx.stream(dev):
+            # 1. matmul sweep, fp32
+            for n in (1024, 2048, 4096):
+                a = mx.random.normal((n, n)); b = mx.random.normal((n, n)); mx.eval(a, b)
+                row(f"matmul{n}", name, med(lambda: mx.eval(a @ b)), "GFLOPS", 2 * n**3 / 1e9)
+            # 2. MLP training step, batch 512, 784-1024-1024-10
+            net = nn.Sequential(nn.Linear(784, 1024), nn.ReLU(), nn.Linear(1024, 1024), nn.ReLU(), nn.Linear(1024, 10))
+            mx.eval(net.parameters()); opt = optim.SGD(0.01)
+            x = mx.random.normal((512, 784)); y = mx.random.randint(0, 10, (512,))
+            lg = nn.value_and_grad(net, lambda m, x, y: nn.losses.cross_entropy(m(x), y).mean())
+            def step():
+                _, g = lg(net, x, y); opt.update(net, g); mx.eval(net.parameters(), opt.state)
+            row("mlp_train_step", name, med(step), "samples/s", 512)
+            # 3. Transformer encoder stack, seq 128, d_model 512, batch 16: forward + backward
+            enc = nn.TransformerEncoder(4, 512, 8, mlp_dims=2048)
+            mx.eval(enc.parameters())
+            t = mx.random.normal((16, 128, 512))
+            g = nn.value_and_grad(enc, lambda m, t: m(t, None).sum())
+            def tstep():
+                _, gr = g(enc, t); mx.eval(gr)
+            row("transformer_fwd_bwd", name, med(tstep), "tok/s", 16 * 128)
