@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1](https://github.com/Matheus-Thurler/KubeSilicon/compare/v0.3.0...v0.3.1) (2026-11-10)
+
+
+### Bug Fixes
+
+* give every Fashion-MNIST run its own bucket prefix ([faab3f5](https://github.com/Matheus-Thurler/KubeSilicon/commit/faab3f5253e0eeeb2d8530fbb2e0f7755447f5b2))
+* give every Fashion-MNIST run its own bucket prefix ([c80daab](https://github.com/Matheus-Thurler/KubeSilicon/commit/c80daabb390576ac19b26f00f4f10530d8757852))
+
 ## [0.3.0](https://github.com/Matheus-Thurler/KubeSilicon/compare/v0.2.0...v0.3.0) (2026-11-09)
 
 
