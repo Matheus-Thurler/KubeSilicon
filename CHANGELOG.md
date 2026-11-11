@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.2](https://github.com/Matheus-Thurler/KubeSilicon/compare/v0.3.1...v0.3.2) (2026-11-11)
+
+
+### Bug Fixes
+
+* close two ways a cluster object could reach files or code on the host ([bed01c0](https://github.com/Matheus-Thurler/KubeSilicon/commit/bed01c0b21d201325537a0419d83d932b45e17aa))
+* **image:** reject disk sources that read files of the host ([796e6fb](https://github.com/Matheus-Thurler/KubeSilicon/commit/796e6fbba5e8706d2c26ec99b4b4183dcb85c058))
+* **job:** validate python and dependencies before uv runs them ([77dcaf1](https://github.com/Matheus-Thurler/KubeSilicon/commit/77dcaf174da3952e63c760f38fa229c5416c8a65))
+
 ## [0.3.1](https://github.com/Matheus-Thurler/KubeSilicon/compare/v0.3.0...v0.3.1) (2026-11-10)
 
 
