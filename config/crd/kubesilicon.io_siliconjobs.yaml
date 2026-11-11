@@ -23,10 +23,10 @@ spec:
               type: object
               properties:
                 running: { type: boolean, default: true, description: "false cancels the job" }
-                python: { type: string, default: "3.12" }
+                python: { type: string, default: "3.12", pattern: '^3\.\d+(\.\d+)?$', description: "Python version, not a path" }
                 dependencies:
                   type: array
-                  items: { type: string }
+                  items: { type: string, pattern: "^[A-Za-z0-9]" }
                   description: "pip requirements, binary wheels only (no sdist builds)"
                 script: { type: string, description: "inline Python, runs as script.py (alternative to command)" }
                 command:

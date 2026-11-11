@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"syscall"
 	"time"
 
@@ -32,6 +33,25 @@ type jobSpec struct {
 	Outputs []fileRef `json:"outputs"`
 }
 
+var (
+	pyVersion   = regexp.MustCompile(`^3\.\d+(\.\d+)?$`)
+	requirement = regexp.MustCompile(`^[A-Za-z0-9]`)
+)
+
+// validate rejects values that uv, which runs outside the sandbox, would treat as something
+// other than a version or a requirement: a python path is executed, a "-flag" changes the install.
+func (s jobSpec) validate() error {
+	if !pyVersion.MatchString(s.Python) {
+		return fmt.Errorf("spec.python %q must be a version like 3.12", s.Python)
+	}
+	for _, d := range s.Deps {
+		if !requirement.MatchString(d) {
+			return fmt.Errorf("spec.dependencies: %q must start with a package name", d)
+		}
+	}
+	return nil
+}
+
 // runjob is the per-job process ("kubesilicond runjob DIR"). Like launch, it survives the daemon.
 // It always ends by writing <dir>/exit as "<code> <message>"; the daemon turns that into status.
 func runjob(dir string) {
@@ -43,6 +63,9 @@ func execJob(dir string) (int, string) {
 	var s jobSpec
 	if b, err := os.ReadFile(filepath.Join(dir, "spec.json")); err != nil || json.Unmarshal(b, &s) != nil {
 		return 1, "cannot read spec.json"
+	}
+	if err := s.validate(); err != nil {
+		return 1, err.Error()
 	}
 	logf, err := os.OpenFile(filepath.Join(dir, "job.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
