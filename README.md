@@ -92,6 +92,8 @@ kubectl patch sjob train --type=merge -p '{"spec":{"running":false}}'   # cancel
 hack/e2e-job.sh kind-<cluster>                                          # end-to-end test
 ```
 
+Besides `phase`, `message`, `logTail` and `attempts`, `status` has `startTime` (when the job went Running), `completionTime` (when it ended) and `exitCode` (the script's, when it has one).
+
 ### Parallel jobs
 
 The Apple GPU has no partitions. What runs out is the unified memory, which the GPU shares with the CPU and with your desktop. So the queue is about memory:

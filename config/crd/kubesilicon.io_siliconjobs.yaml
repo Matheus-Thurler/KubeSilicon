@@ -59,3 +59,6 @@ spec:
                 message: { type: string }
                 logTail: { type: string, description: "last 4 KiB of the job log" }
                 attempts: { type: integer, description: "times the runner was interrupted and restarted" }
+                startTime: { type: string, format: date-time, description: "when the job went Running" }
+                completionTime: { type: string, format: date-time, description: "when the job reached Succeeded, Failed or Cancelled" }
+                exitCode: { type: integer, description: "exit code of the script, set when one exists" }

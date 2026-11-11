@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"syscall"
@@ -58,7 +59,7 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	}
 
 	if code, msg, done := readExit(dir); done { // terminal
-		return 0, d.setJobStatus(ctx, api, u, exitPhase(code, msg), msg)
+		return 0, d.setJobStatusN(ctx, api, u, exitPhase(code, msg), msg, attempts(u), code)
 	}
 
 	running, ok, _ := unstructured.NestedBool(u.Object, "spec", "running")
@@ -115,7 +116,7 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	d.mu.Lock()
 	delete(d.jobs, key)
 	d.mu.Unlock()
-	return time.Second, d.setJobStatusN(ctx, api, u, "Pending", fmt.Sprintf("interrupted, retry %d of %d", n+1, limit), n+1)
+	return time.Second, d.setJobStatusN(ctx, api, u, "Pending", fmt.Sprintf("interrupted, retry %d of %d", n+1, limit), n+1, -1)
 }
 
 // killStale kills the script's process group left by a runner that died (kill -9): without this
@@ -298,17 +299,44 @@ func readExit(dir string) (code int, msg string, done bool) {
 const logTail = 4096
 
 func (d *daemon) setJobStatus(ctx context.Context, api dynamic.ResourceInterface, u *unstructured.Unstructured, phase, msg string) error {
-	return d.setJobStatusN(ctx, api, u, phase, msg, attempts(u))
+	return d.setJobStatusN(ctx, api, u, phase, msg, attempts(u), -1)
 }
 
-func (d *daemon) setJobStatusN(ctx context.Context, api dynamic.ResourceInterface, u *unstructured.Unstructured, phase, msg string, n int) error {
+// jobStatus is the new status. startTime is set when the job goes Running and kept until the
+// next Pending (a retry); completionTime and exitCode are set once, at a terminal phase.
+// code < 0: no script exit code. A cancel has none either: its 130 is the daemon's own.
+func jobStatus(cur map[string]any, phase, msg, tail string, n, code int, now string) map[string]any {
+	st := map[string]any{"phase": phase, "message": msg, "logTail": tail, "attempts": int64(n)}
+	keep := func(k string) string {
+		if v, _ := cur[k].(string); v != "" {
+			return v
+		}
+		return now
+	}
+	switch phase {
+	case "Running":
+		st["startTime"] = keep("startTime")
+	case "Succeeded", "Failed", "Cancelled":
+		if v, _ := cur["startTime"].(string); v != "" {
+			st["startTime"] = v
+		}
+		st["completionTime"] = keep("completionTime")
+		if code >= 0 && phase != "Cancelled" {
+			st["exitCode"] = int64(code)
+		}
+	}
+	return st
+}
+
+func (d *daemon) setJobStatusN(ctx context.Context, api dynamic.ResourceInterface, u *unstructured.Unstructured, phase, msg string, n, code int) error {
 	tail := readTail(filepath.Join(d.jobDir(u.GetNamespace()+"/"+u.GetName()), "job.log"), logTail)
 	cur, _, _ := unstructured.NestedMap(u.Object, "status")
-	if cur["phase"] == phase && cur["message"] == msg && cur["logTail"] == tail && attempts(u) == n {
+	st := jobStatus(cur, phase, msg, tail, n, code, time.Now().UTC().Format(time.RFC3339))
+	if reflect.DeepEqual(st, cur) {
 		return nil
 	}
 	u = u.DeepCopy()
-	if err := unstructured.SetNestedField(u.Object, map[string]any{"phase": phase, "message": msg, "logTail": tail, "attempts": int64(n)}, "status"); err != nil {
+	if err := unstructured.SetNestedField(u.Object, st, "status"); err != nil {
 		return err
 	}
 	_, err := api.UpdateStatus(ctx, u, metav1.UpdateOptions{})
