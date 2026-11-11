@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -111,7 +112,8 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	if int64(n) >= limit {
 		return 0, d.setJobStatus(ctx, api, u, "Failed", fmt.Sprintf("interrupted %d time(s) without a result, giving up (see launcher.log in %s)", n+1, dir))
 	}
-	for _, f := range []string{"venv", "work", "pid", "exit", "mem"} {
+	killStale(dir)
+	for _, f := range []string{"venv", "work", "pid", "pgid", "exit", "mem"} {
 		os.RemoveAll(filepath.Join(dir, f))
 	}
 	if f, err := os.OpenFile(filepath.Join(dir, "job.log"), os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
@@ -122,6 +124,15 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	delete(d.jobs, key)
 	d.mu.Unlock()
 	return time.Second, d.setJobStatusN(ctx, api, u, "Pending", fmt.Sprintf("interrupted, retry %d of %d", n+1, limit), n+1)
+}
+
+// killStale kills the script's process group left by a runner that died (kill -9): without this
+// the retry would run next to it. ponytail: a reused pgid is not detected; the window is a reboot.
+func killStale(dir string) {
+	b, _ := os.ReadFile(filepath.Join(dir, "pgid"))
+	if pg, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pg > 1 {
+		syscall.Kill(-pg, syscall.SIGKILL)
+	}
 }
 
 func attempts(u *unstructured.Unstructured) int {

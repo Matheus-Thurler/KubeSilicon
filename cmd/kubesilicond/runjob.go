@@ -167,6 +167,7 @@ func execJob(dir string) (int, string) {
 	if err := cmd.Start(); err != nil {
 		return 1, err.Error()
 	}
+	os.WriteFile(filepath.Join(dir, "pgid"), []byte(strconv.Itoa(cmd.Process.Pid)), 0o644) // Setpgid: group id = pid
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	// The watchdog is the memory limit macOS does not have (no cgroups): it measures the job's

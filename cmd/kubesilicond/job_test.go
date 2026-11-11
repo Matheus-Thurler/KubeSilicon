@@ -1,8 +1,14 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestAdmission(t *testing.T) {
@@ -54,4 +60,27 @@ func TestJobSpecMemory(t *testing.T) {
 			t.Errorf("accepted memory %q", m)
 		}
 	}
+}
+
+func TestKillStaleKillsTheScriptGroup(t *testing.T) {
+	dir := t.TempDir()
+	c := exec.Command("sleep", "60")
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "pgid"), []byte(strconv.Itoa(c.Process.Pid)), 0o644)
+	killStale(dir)
+	done := make(chan error, 1)
+	go func() { done <- c.Wait() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("sleep exited normally")
+		}
+	case <-time.After(5 * time.Second):
+		c.Process.Kill()
+		t.Fatal("the group survived")
+	}
+	killStale(t.TempDir()) // no pgid file: nothing happens
 }
