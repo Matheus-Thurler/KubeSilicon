@@ -10,10 +10,14 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"syscall"
 	"time"
 
+	"k8s.io/apimachinery/pkg/api/resource"
+
 	"github.com/Matheus-Thurler/kubesilicon/internal/artifact"
+	"github.com/Matheus-Thurler/kubesilicon/internal/mem"
 	"github.com/Matheus-Thurler/kubesilicon/internal/sandbox"
 )
 
@@ -29,6 +33,7 @@ type jobSpec struct {
 	Script  string    `json:"script"`
 	Command []string  `json:"command"`
 	Timeout int       `json:"timeoutSeconds"`
+	Memory  string    `json:"memory"`
 	Inputs  []fileRef `json:"inputs"`
 	Outputs []fileRef `json:"outputs"`
 }
@@ -49,8 +54,24 @@ func (s jobSpec) validate() error {
 			return fmt.Errorf("spec.dependencies: %q must start with a package name", d)
 		}
 	}
+	if s.Memory != "" {
+		if q, err := resource.ParseQuantity(s.Memory); err != nil || q.Value() <= 0 {
+			return fmt.Errorf("spec.memory %q must be a positive quantity like 4Gi", s.Memory)
+		}
+	}
 	return nil
 }
+
+// memBytes is spec.memory in bytes; 0 means not declared (the job runs alone, with no limit).
+func (s jobSpec) memBytes() uint64 {
+	if q, err := resource.ParseQuantity(s.Memory); err == nil && q.Value() > 0 {
+		return uint64(q.Value())
+	}
+	return 0
+}
+
+// gib prints bytes the way spec.memory is written.
+func gib(b uint64) string { return strconv.FormatFloat(float64(b)/(1<<30), 'f', 1, 64) + "Gi" }
 
 // runjob is the per-job process ("kubesilicond runjob DIR"). Like launch, it survives the daemon.
 // It always ends by writing <dir>/exit as "<code> <message>"; the daemon turns that into status.
@@ -148,12 +169,39 @@ func execJob(dir string) (int, string) {
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
+	// The watchdog is the memory limit macOS does not have (no cgroups): it measures the job's
+	// process group and kills it once it uses more than it declared. It also publishes the
+	// current use in <dir>/mem, which the daemon reads to decide whether another job fits.
+	limit := s.memBytes()
+	tick := time.NewTicker(2 * time.Second)
+	defer tick.Stop()
 	var werr error
-	select {
-	case werr = <-done:
-	case <-ctx.Done():
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		werr = <-done
+	var peak uint64
+	over := false
+wait:
+	for {
+		select {
+		case werr = <-done:
+			break wait
+		case <-ctx.Done():
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			werr = <-done
+			break wait
+		case <-tick.C:
+			used := mem.Footprint(cmd.Process.Pid)
+			peak = max(peak, used)
+			os.WriteFile(filepath.Join(dir, "mem"), []byte(strconv.FormatUint(used, 10)), 0o644)
+			if limit > 0 && used > limit {
+				over = true
+				syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+				werr = <-done
+				break wait
+			}
+		}
+	}
+	say("peak memory %s", gib(peak))
+	if over {
+		return 137, fmt.Sprintf("memory limit exceeded: used %s, spec.memory is %s", gib(peak), s.Memory)
 	}
 	if ctx.Err() != nil {
 		return end(ctx, terminated, 1, "")

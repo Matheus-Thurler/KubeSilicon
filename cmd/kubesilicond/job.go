@@ -17,6 +17,8 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+
+	"github.com/Matheus-Thurler/kubesilicon/internal/mem"
 )
 
 var jobGVR = schema.GroupVersionResource{Group: "kubesilicon.io", Version: "v1", Resource: "siliconjobs"}
@@ -81,9 +83,12 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 		// another daemon cleaned it up). Never run it again; the recorded status stays.
 		return 0, nil
 	case p == nil && ph != "Running":
-		// One GPU job at a time: the Mac GPU and its unified memory are shared with the desktop.
-		if d.gpuBusy(key) {
-			return 5 * time.Second, d.setJobStatus(ctx, api, u, "Pending", "waiting for the running job to finish")
+		wait, err := d.admit(key, u)
+		if err != nil {
+			return 0, d.setJobStatus(ctx, api, u, "Failed", err.Error())
+		}
+		if wait != "" {
+			return 5 * time.Second, d.setJobStatus(ctx, api, u, "Pending", wait)
 		}
 		np, err := d.startJob(dir, u)
 		if err != nil {
@@ -146,16 +151,94 @@ func (d *daemon) startJob(dir string, u *unstructured.Unstructured) (*proc, erro
 	return spawn(dir, "runjob", dir)
 }
 
-// gpuBusy reports whether a job other than key has a live runner (also after a daemon restart).
-func (d *daemon) gpuBusy(key string) bool {
-	entries, _ := os.ReadDir(filepath.Join(d.root, "jobs"))
-	self := strings.ReplaceAll(key, "/", "_")
-	for _, e := range entries {
-		if e.Name() != self && adopt(filepath.Join(d.root, "jobs", e.Name()), "runjob") != nil {
-			return true
+// running is a job with a live runner: what it declared (0: nothing, it runs alone) and what it uses now.
+type running struct{ req, used uint64 }
+
+// admit decides whether the job may start now: "" means yes, anything else is the reason it waits.
+// Jobs start in creation order, so a big job at the head of the line is never starved by small ones.
+func (d *daemon) admit(key string, u *unstructured.Unstructured) (string, error) {
+	var js jobSpec
+	b, _ := json.Marshal(u.Object["spec"])
+	json.Unmarshal(b, &js)
+	if js.Memory != "" && js.memBytes() == 0 {
+		return "", fmt.Errorf("spec.memory %q must be a positive quantity like 4Gi", js.Memory)
+	}
+	avail, total := mem.Available()
+	wait, err := admission(js.memBytes(), d.runningJobs(key), avail, total, d.reserve)
+	if err != nil { // can never run: say so now, not after its turn in the queue
+		return "", err
+	}
+	if !d.firstInLine(u) {
+		return "waiting in the queue", nil
+	}
+	return wait, nil
+}
+
+// admission is the queue policy. The Mac GPU has no partitions; what runs out is the unified
+// memory it shares with the desktop. So a job that declares spec.memory starts when that much
+// is really available: what macOS reports now, minus what running jobs declared and have not
+// used yet, minus a reserve for everything else. A job that declares nothing runs alone.
+func admission(req uint64, others []running, avail, total, reserve uint64) (string, error) {
+	if req > 0 && req+reserve > total {
+		return "", fmt.Errorf("spec.memory %s can never fit: this Mac has %s and keeps %s free", gib(req), gib(total), gib(reserve))
+	}
+	if req == 0 {
+		if len(others) > 0 {
+			return "waiting for the running jobs to finish (no spec.memory: this job runs alone)", nil
+		}
+		return "", nil
+	}
+	free := int64(avail) - int64(reserve)
+	for _, o := range others {
+		if o.req == 0 {
+			return "waiting for a job that runs alone (it has no spec.memory)", nil
+		}
+		if o.req > o.used {
+			free -= int64(o.req - o.used)
 		}
 	}
-	return false
+	if int64(req) > free {
+		return fmt.Sprintf("waiting for memory: needs %s, %s free", gib(req), gib(uint64(max(free, 0)))), nil
+	}
+	return "", nil
+}
+
+// runningJobs lists the jobs other than key that have a live runner (also after a daemon restart).
+func (d *daemon) runningJobs(key string) []running {
+	entries, _ := os.ReadDir(filepath.Join(d.root, "jobs"))
+	self := strings.ReplaceAll(key, "/", "_")
+	var out []running
+	for _, e := range entries {
+		dir := filepath.Join(d.root, "jobs", e.Name())
+		if e.Name() == self || adopt(dir, "runjob") == nil {
+			continue
+		}
+		var js jobSpec
+		b, _ := os.ReadFile(filepath.Join(dir, "spec.json"))
+		json.Unmarshal(b, &js)
+		b, _ = os.ReadFile(filepath.Join(dir, "mem")) // written by the runner's watchdog; absent until its first sample
+		used, _ := strconv.ParseUint(strings.TrimSpace(string(b)), 10, 64)
+		out = append(out, running{js.memBytes(), used})
+	}
+	return out
+}
+
+// firstInLine reports whether no older job is still waiting to start.
+func (d *daemon) firstInLine(u *unstructured.Unstructured) bool {
+	for _, o := range d.jstore.List() {
+		x := o.(*unstructured.Unstructured)
+		if x.GetUID() != u.GetUID() && waiting(x) && x.GetCreationTimestamp().Time.Before(u.GetCreationTimestamp().Time) {
+			return false
+		}
+	}
+	return true
+}
+
+// waiting: the job has not started and still wants to.
+func waiting(u *unstructured.Unstructured) bool {
+	ph, _, _ := unstructured.NestedString(u.Object, "status", "phase")
+	run, ok, _ := unstructured.NestedBool(u.Object, "spec", "running")
+	return u.GetDeletionTimestamp() == nil && !isFinal(u) && ph != "Running" && (!ok || run)
 }
 
 func (d *daemon) lookupJob(key string) *proc {
