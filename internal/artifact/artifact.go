@@ -4,6 +4,7 @@
 package artifact
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,11 +22,15 @@ func Path(dir, rel string) (string, error) {
 	return p, nil
 }
 
-func Download(url, dest string) error {
+func Download(ctx context.Context, url, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	r, err := http.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	r, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -42,7 +47,7 @@ func Download(url, dest string) error {
 	return err
 }
 
-func Upload(src, url string) error {
+func Upload(ctx context.Context, src, url string) error {
 	f, err := os.Open(src)
 	if err != nil {
 		return err
@@ -52,7 +57,7 @@ func Upload(src, url string) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPut, url, f)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, f)
 	if err != nil {
 		return err
 	}

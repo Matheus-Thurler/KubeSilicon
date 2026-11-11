@@ -1,12 +1,14 @@
 package artifact
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestPath(t *testing.T) {
@@ -32,13 +34,29 @@ func TestRoundTrip(t *testing.T) {
 	defer srv.Close()
 	d := t.TempDir()
 	f := filepath.Join(d, "sub", "in.txt")
-	if err := Download(srv.URL+"/x?sig=secret", f); err != nil {
+	if err := Download(context.Background(), srv.URL+"/x?sig=secret", f); err != nil {
 		t.Fatal(err)
 	}
 	if b, _ := os.ReadFile(f); string(b) != "data" {
 		t.Fatalf("download got %q", b)
 	}
-	if err := Upload(f, srv.URL+"/y"); err != nil || string(got) != "data" {
+	if err := Upload(context.Background(), f, srv.URL+"/y"); err != nil || string(got) != "data" {
 		t.Fatalf("upload: %v %q", err, got)
+	}
+}
+
+func TestContextBoundsHungServer(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer srv.Close()
+	f := filepath.Join(t.TempDir(), "f")
+	os.WriteFile(f, []byte("x"), 0o644)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if Download(ctx, srv.URL, f) == nil || Upload(ctx, f, srv.URL) == nil {
+		t.Fatal("hung server: no error")
+	}
+	if time.Since(start) > 3*time.Second {
+		t.Fatal("did not return when the context ended")
 	}
 }

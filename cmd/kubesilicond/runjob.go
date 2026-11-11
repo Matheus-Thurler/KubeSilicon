@@ -109,10 +109,10 @@ func execJob(dir string) (int, string) {
 		p, err := artifact.Path(work, in.Path)
 		if err == nil {
 			say("input %s", in.Path)
-			err = artifact.Download(in.URL, p)
+			err = artifact.Download(ctx, in.URL, p)
 		}
 		if err != nil {
-			return 1, "input: " + err.Error()
+			return end(ctx, false, 1, "input: "+err.Error())
 		}
 	}
 
@@ -218,10 +218,10 @@ wait:
 		p, err := artifact.Path(work, o.Path)
 		if err == nil {
 			say("output %s", o.Path)
-			err = artifact.Upload(p, o.URL)
+			err = artifact.Upload(ctx, p, o.URL)
 		}
 		if err != nil {
-			return 1, "output: " + err.Error()
+			return end(ctx, false, 1, "output: "+err.Error())
 		}
 	}
 	return 0, "done"
