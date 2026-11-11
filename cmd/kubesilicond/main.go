@@ -46,8 +46,9 @@ type daemon struct {
 	jobs map[string]*proc // runner per SiliconJob, same model
 	jq   workqueue.TypedRateLimitingInterface[string]
 
-	jstore  cache.Store // SiliconJobs, for the queue order
-	reserve uint64      // memory the job queue never hands out
+	jstore  cache.Store                     // SiliconJobs, for the queue order
+	reserve uint64                          // memory the job queue never hands out
+	runner  func(dir string) (*proc, error) // starts the job runner; nil: the real one (a seam for tests)
 }
 
 func main() {

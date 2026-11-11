@@ -166,6 +166,9 @@ func (d *daemon) startJob(dir string, u *unstructured.Unstructured) (*proc, erro
 			return nil, err
 		}
 	}
+	if d.runner != nil {
+		return d.runner(dir)
+	}
 	return spawn(dir, "runjob", dir)
 }
 
