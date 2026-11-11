@@ -84,3 +84,20 @@ func TestKillStaleKillsTheScriptGroup(t *testing.T) {
 	}
 	killStale(t.TempDir()) // no pgid file: nothing happens
 }
+
+func TestExitPhase(t *testing.T) {
+	for _, c := range []struct {
+		code int
+		msg  string
+		want string
+	}{
+		{0, "done", "Succeeded"},
+		{1, "command exited with 1", "Failed"},
+		{130, "command exited with 130", "Failed"},
+		{130, cancelMsg, "Cancelled"},
+	} {
+		if got := exitPhase(c.code, c.msg); got != c.want {
+			t.Errorf("%d %q: got %s, want %s", c.code, c.msg, got, c.want)
+		}
+	}
+}

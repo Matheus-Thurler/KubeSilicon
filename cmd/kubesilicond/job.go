@@ -58,22 +58,14 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	}
 
 	if code, msg, done := readExit(dir); done { // terminal
-		phase := "Succeeded"
-		switch code {
-		case 0:
-		case 130:
-			phase = "Cancelled"
-		default:
-			phase = "Failed"
-		}
-		return 0, d.setJobStatus(ctx, api, u, phase, msg)
+		return 0, d.setJobStatus(ctx, api, u, exitPhase(code, msg), msg)
 	}
 
 	running, ok, _ := unstructured.NestedBool(u.Object, "spec", "running")
 	if ok && !running {
 		d.stopJob(key)
-		os.WriteFile(filepath.Join(dir, "exit"), []byte("130 cancelled by spec.running=false"), 0o644)
-		return 0, d.setJobStatus(ctx, api, u, "Cancelled", "cancelled by spec.running=false")
+		os.WriteFile(filepath.Join(dir, "exit"), []byte("130 "+cancelMsg), 0o644)
+		return 0, d.setJobStatus(ctx, api, u, "Cancelled", cancelMsg)
 	}
 
 	p := d.lookupJob(key)
@@ -133,6 +125,20 @@ func killStale(dir string) {
 	if pg, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pg > 1 {
 		syscall.Kill(-pg, syscall.SIGKILL)
 	}
+}
+
+const cancelMsg = "cancelled by spec.running=false"
+
+// exitPhase maps the exit file to a phase. Only the daemon's own cancel message means Cancelled:
+// a script can exit 130 by itself, and that is a failure.
+func exitPhase(code int, msg string) string {
+	switch {
+	case code == 0:
+		return "Succeeded"
+	case code == 130 && msg == cancelMsg:
+		return "Cancelled"
+	}
+	return "Failed"
 }
 
 func attempts(u *unstructured.Unstructured) int {
