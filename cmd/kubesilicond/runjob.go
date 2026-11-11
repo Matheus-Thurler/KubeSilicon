@@ -199,7 +199,9 @@ wait:
 			}
 		}
 	}
-	say("peak memory %s", gib(peak))
+	if peak > 0 { // a job shorter than one sample has no number worth printing
+		say("peak memory %s", gib(peak))
+	}
 	if over {
 		return 137, fmt.Sprintf("memory limit exceeded: used %s, spec.memory is %s", gib(peak), s.Memory)
 	}

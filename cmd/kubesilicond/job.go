@@ -111,7 +111,7 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	if int64(n) >= limit {
 		return 0, d.setJobStatus(ctx, api, u, "Failed", fmt.Sprintf("interrupted %d time(s) without a result, giving up (see launcher.log in %s)", n+1, dir))
 	}
-	for _, f := range []string{"venv", "work", "pid", "exit"} {
+	for _, f := range []string{"venv", "work", "pid", "exit", "mem"} {
 		os.RemoveAll(filepath.Join(dir, f))
 	}
 	if f, err := os.OpenFile(filepath.Join(dir, "job.log"), os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
