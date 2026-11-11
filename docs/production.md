@@ -45,7 +45,7 @@ A `SiliconJob` runs code on the Mac as the user of the daemon. Anyone who can cr
 ## Limits
 
 - Isolation is `sandbox-exec` (deprecated by Apple) plus a work directory. It stops a job reading your home directory or writing outside its directory. It does not stop network access, and it is not a boundary against hostile code. Not safe for untrusted tenants; a dedicated macOS user would be the next step.
-- No per-job memory limit; the GPU and its unified memory are shared with the desktop. One GPU job runs at a time.
+- The GPU and its unified memory are shared with the desktop. A job with `spec.memory` is killed when it uses more (checked every 2 s, so a fast allocation can overshoot for a moment); a job without it has no limit and runs alone. The queue reads how much memory is available when a job is about to start; it does not stop the desktop from taking that memory later.
 - One Mac per cluster state directory (`~/.kubesilicon`); two daemons on different clusters need different `-root` values.
 - GPU for the VMs is not possible.
 

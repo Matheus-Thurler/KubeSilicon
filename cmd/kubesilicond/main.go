@@ -28,6 +28,7 @@ import (
 
 	"github.com/Matheus-Thurler/kubesilicon/internal/image"
 	"github.com/Matheus-Thurler/kubesilicon/internal/lease"
+	"github.com/Matheus-Thurler/kubesilicon/internal/mem"
 	"github.com/Matheus-Thurler/kubesilicon/internal/vm"
 )
 
@@ -44,6 +45,9 @@ type daemon struct {
 	vms  map[string]*proc // launcher per VM; adopted from <dir>/pid after a daemon restart
 	jobs map[string]*proc // runner per SiliconJob, same model
 	jq   workqueue.TypedRateLimitingInterface[string]
+
+	jstore  cache.Store // SiliconJobs, for the queue order
+	reserve uint64      // memory the job queue never hands out
 }
 
 func main() {
@@ -58,9 +62,19 @@ func main() {
 	kubeconfig := flag.String("kubeconfig", "", "path to kubeconfig (default: ~/.kube/config)")
 	kctx := flag.String("context", "", "kubeconfig context (required, avoids acting on the wrong cluster)")
 	root := flag.String("root", filepath.Join(os.Getenv("HOME"), ".kubesilicon"), "state directory")
+	reserve := flag.String("memory-reserve", "", "memory the job queue leaves for everything else, e.g. 4Gi (default: 10% of the RAM, at least 2Gi)")
 	flag.Parse()
 	if *kctx == "" {
 		log.Fatal("-context is required")
+	}
+	_, total := mem.Available()
+	keep := max(total/10, 2<<30)
+	if *reserve != "" {
+		q, err := resource.ParseQuantity(*reserve)
+		if err != nil || q.Value() < 0 {
+			log.Fatalf("-memory-reserve %q: not a quantity", *reserve)
+		}
+		keep = uint64(q.Value())
 	}
 
 	rules := clientcmd.NewDefaultClientConfigLoadingRules()
@@ -76,7 +90,7 @@ func main() {
 	newQ := func() workqueue.TypedRateLimitingInterface[string] {
 		return workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())
 	}
-	d := &daemon{c: c, root: *root, vms: map[string]*proc{}, jobs: map[string]*proc{}, q: newQ(), jq: newQ()}
+	d := &daemon{c: c, root: *root, vms: map[string]*proc{}, jobs: map[string]*proc{}, q: newQ(), jq: newQ(), reserve: keep}
 	for _, sub := range []string{"cache", "images", "vms", "jobs"} {
 		if err := os.MkdirAll(filepath.Join(d.root, sub), 0o755); err != nil {
 			log.Fatal(err)
@@ -114,7 +128,8 @@ func main() {
 	if !cache.WaitForCacheSync(ctx.Done(), jinf.HasSynced) {
 		log.Fatal("CRD siliconjobs.kubesilicon.io not found: apply config/crd first")
 	}
-	d.cleanupJobs(jinf.GetStore())
+	d.jstore = jinf.GetStore()
+	d.cleanupJobs(d.jstore)
 	go d.runJobs()
 	log.Printf("kubesilicond ready (context %s)", *kctx)
 

@@ -48,7 +48,7 @@ wait_phase e2e-long Running
 mk e2e-queued "  script: |
     print('queued job ran')"
 sleep 4; [ "$(phase e2e-queued)" = "Pending" ]
-ok "second job waits (one GPU job at a time)"
+ok "a job without spec.memory runs alone"
 k patch sjob e2e-long --type=merge -p '{"spec":{"running":false}}' >/dev/null
 wait_phase e2e-long Cancelled
 wait_phase e2e-queued Succeeded
@@ -97,4 +97,16 @@ mk e2e-badpath "  inputs: [{ url: 'http://127.0.0.1:18765/in.txt', path: ../esca
     print('x')"
 wait_phase e2e-badpath Failed
 ok "input path escaping the work dir is rejected"
+
+for j in e2e-par1 e2e-par2; do mk $j "  memory: 1Gi
+  script: |
+    import time; time.sleep(20)"; sleep 1.2; done
+wait_phase e2e-par1 Running; wait_phase e2e-par2 Running
+ok "jobs that declare spec.memory run at the same time"
+mk e2e-over "  memory: 1Gi
+  script: |
+    import time; b = bytearray(2 << 30); time.sleep(30)"
+wait_phase e2e-over Failed
+k get sjob e2e-over -o jsonpath='{.status.message}' | grep -q "memory limit exceeded"
+ok "a job over its spec.memory is killed"
 echo "ALL OK"

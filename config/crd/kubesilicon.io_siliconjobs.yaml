@@ -34,6 +34,7 @@ spec:
                   items: { type: string }
                   description: "argv run in the job work dir; 'python' resolves to the job venv"
                 timeoutSeconds: { type: integer, minimum: 1, default: 3600 }
+                memory: { type: string, description: "e.g. 4Gi: memory (CPU and GPU, they are the same on Apple Silicon) the job may use. With it, the job runs next to others when that much is available and is killed if it uses more. Without it, the job runs alone, with no limit" }
                 backoffLimit: { type: integer, minimum: 0, default: 2, description: "retries when the runner is interrupted without a result (Mac reboot, kill); script failures are not retried" }
                 inputs:
                   type: array

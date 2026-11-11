@@ -68,7 +68,7 @@ Stopping `kubesilicond` does **not** stop the VMs. Stop a VM with `running: fals
 
 ## GPU jobs (SiliconJob)
 
-A Linux guest cannot reach the Mac GPU, so GPU work runs natively on macOS. A `SiliconJob` runs a Python script in its own `uv` venv, inside a `sandbox-exec` profile (writes only in the job directory, no reads of your home), with PyTorch MPS or MLX. One job runs at a time; the others wait as `Pending`.
+A Linux guest cannot reach the Mac GPU, so GPU work runs natively on macOS. A `SiliconJob` runs a Python script in its own `uv` venv, inside a `sandbox-exec` profile (writes only in the job directory, no reads of your home), with PyTorch MPS or MLX. Jobs start in creation order. A job that declares `memory` runs next to others; one that does not runs alone (see [Parallel jobs](#parallel-jobs)).
 
 ```yaml
 apiVersion: kubesilicon.io/v1
@@ -77,6 +77,7 @@ metadata: { name: train }
 spec:
   dependencies: [torch]          # binary wheels only
   timeoutSeconds: 3600
+  memory: 6Gi                    # optional: lets the job share the GPU, and is its limit
   inputs:  [{ url: "https://.../data.csv", path: data.csv }]      # GET before the job
   outputs: [{ url: "https://.../model.pt?X-Amz-...", path: model.pt }]  # PUT after (presigned)
   script: |
@@ -90,6 +91,17 @@ kubesilicon -context kind-<cluster> logs train
 kubectl patch sjob train --type=merge -p '{"spec":{"running":false}}'   # cancel
 hack/e2e-job.sh kind-<cluster>                                          # end-to-end test
 ```
+
+### Parallel jobs
+
+The Apple GPU has no partitions. What runs out is the unified memory, which the GPU shares with the CPU and with your desktop. So the queue is about memory:
+
+- A job with `spec.memory` starts when that much is available right now: what macOS reports as available, minus what the running jobs declared and have not used yet, minus a reserve (10% of the RAM, at least 2Gi; `kubesilicond -memory-reserve` changes it). Nothing is configured per Mac: a bigger or an idle Mac runs more jobs at once.
+- The runner measures the job (CPU and GPU memory together) every 2 s and kills it when it uses more than `spec.memory`: `Failed`, "memory limit exceeded". The peak is written at the end of the job log, so you can size the next run.
+- A job without `spec.memory` runs alone, as before, with no limit.
+- Jobs start in creation order, so a big job is not starved by small ones behind it.
+
+Running jobs together does not make the GPU faster. Measured on an M5 Pro with MLX (one 6 s run each): four small MLP trainings at once did 1.8x the total work of one, because one small job leaves the GPU mostly idle; four 4096x4096 matmul loops at once did 0.85x, because one already fills it.
 
 ### MLX
 

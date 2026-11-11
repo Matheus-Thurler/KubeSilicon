@@ -101,18 +101,18 @@ Goal: Kubeflow steps and training jobs in the local kind cluster use the Mac GPU
 
 ### Status
 
-Phases 1 to 3 are implemented and tested on an M5 Pro Mac: `hack/e2e-job.sh` (sandbox, timeout, cancel, one-job queue, artifacts, path escape), a daemon-restart check, and a Kubeflow Pipelines 2.18.0 run (`examples/kubeflow/pipeline.py`) whose step created a `SiliconJob` that trained a small model on `mps`. Metal/MPS works from a detached process and inside the `sandbox-exec` profile.
+Phases 1 to 3 are implemented and tested on an M5 Pro Mac: `hack/e2e-job.sh` (sandbox, timeout, cancel, queue, parallel jobs and memory limit, artifacts, path escape), a daemon-restart check, and a Kubeflow Pipelines 2.18.0 run (`examples/kubeflow/pipeline.py`) whose step created a `SiliconJob` that trained a small model on `mps`. Metal/MPS works from a detached process and inside the `sandbox-exec` profile.
 
 How it fits together: the KFP step is a pod in kind; it creates a `SiliconJob` through the Kubernetes API (RBAC in `examples/kubeflow/rbac.yaml`) and polls `status`. `kubesilicond` runs the script on macOS and mirrors the phase and the last 4 KiB of the log into `status.logTail`, so the step log shows the Mac output. `hack/kind-kubeflow.sh` builds the whole cluster (k8s 1.34, cert-manager, KFP, CRDs).
 
-Known gaps: `kfp-metadata-writer` has no arm64 image, so it is scaled to 0 (no lineage metadata in the UI, pipelines run); artifacts use presigned URLs, not the SeaweedFS Secret (KFP 2.18 ships SeaweedFS, not MinIO); no per-job memory limit (macOS has no cgroups); `status.logTail` is visible to anyone who can read the object; the pipeline step cannot return files from the job yet.
+Known gaps: `kfp-metadata-writer` has no arm64 image, so it is scaled to 0 (no lineage metadata in the UI, pipelines run); artifacts use presigned URLs, not the SeaweedFS Secret (KFP 2.18 ships SeaweedFS, not MinIO); the per-job memory limit is a watchdog that polls, not a kernel limit (macOS has no cgroups); `status.logTail` is visible to anyone who can read the object; the pipeline step cannot return files from the job yet.
 
 ### Phases
 
 1. **Minimal `SiliconJob`.** Runs a command, writes `status` and `job.log`. Proves PyTorch MPS works end to end. Validate here that the Metal device is reachable from a detached process.
 2. **Environment and isolation.** `uv` venv per job, wheel cache, `sandbox-exec` profile, timeout (default set) and cancel. Validate that the profile still allows Metal.
 3. **Artifacts and Kubeflow.** MinIO in and out, a Kubeflow pipeline component that creates the `SiliconJob`, `make kind-kubeflow` with a `kindest/node` image the Kubeflow release supports.
-4. **Hardening.** One GPU job at a time (simple queue) with `nice`, per-job memory limit (unified memory is shared with the desktop), pause the queue, optional `runtime: torch-mps | mlx`, then a Virtual Kubelet node or the homelab cluster.
+4. **Hardening.** Done: `nice`, a queue in creation order, jobs in parallel when their `spec.memory` fits in the memory available, and a per-job limit (`internal/mem` reads the physical footprint, which includes Metal allocations; RSS does not). Not done: pause the queue, optional `runtime: torch-mps | mlx`, then a Virtual Kubelet node or the homelab cluster.
 
 ### Risks and mitigations
 
