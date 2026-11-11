@@ -32,7 +32,8 @@ spec:
                   type: object
                   required: [source]
                   properties:
-                    source: { type: string, minLength: 1, description: "http(s) URL or local path (qcow2 or raw)" }
+                    source: { type: string, minLength: 1, description: "http(s) URL, or a file under ~/.kubesilicon/images on the Mac (self-contained qcow2 or raw)" }
+                    sha256: { type: string, pattern: "^[0-9a-fA-F]{64}$", description: "expected SHA-256 of the downloaded image (http(s) sources)" }
                     size: { type: string, description: "e.g. 20Gi; can only grow" }
                 cloudInit:
                   type: object

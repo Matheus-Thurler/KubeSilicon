@@ -38,6 +38,10 @@ The role (`config/rbac/daemon.yaml`) covers the two CRDs, their `/status` and `/
 
 A `SiliconJob` runs code on the Mac as the user of the daemon. Anyone who can create one in the cluster can run code there. Grant `create` on `siliconjobs` only to people you would let log in to that Mac. For Kubeflow, that is the `pipeline-runner` ServiceAccount (`examples/kubeflow/rbac.yaml`), which any pipeline author can use.
 
+## 4. Who may create VMs
+
+`spec.disk.source` is read on the Mac by the daemon. It accepts an http(s) URL or a file under `~/.kubesilicon/images` (symlinks are resolved), and only self-contained raw or qcow2 images: a qcow2 that names a backing file or an external data file is rejected, because converting it would copy that file of the Mac into the guest disk. Set `spec.disk.sha256` to pin a downloaded image. A VM still uses the Mac's CPU, memory, disk and network, so grant `create` on `siliconvms` with the same care as jobs.
+
 ## Limits
 
 - Isolation is `sandbox-exec` (deprecated by Apple) plus a work directory. It stops a job reading your home directory or writing outside its directory. It does not stop network access, and it is not a boundary against hostile code. Not safe for untrusted tenants; a dedicated macOS user would be the next step.

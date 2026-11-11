@@ -21,7 +21,7 @@ KubeSilicon gives a local Kubernetes cluster on a Mac the KubeVirt workflow (dec
 | virt-handler (reconciles on the node) | `kubesilicond` | One daemon on macOS, informer plus work queue, `client-go` dynamic client |
 | virt-launcher (QEMU in a pod) | `kubesilicond launch` | One detached process per VM (own session), spawned by the daemon. It owns the VM through `internal/vm` |
 | VirtualMachine / VMI | `SiliconVM` | One kind. `spec.running` starts and stops. `status.phase`, `ip`, `message` |
-| DataVolume / CDI | `spec.disk.source` | URL or path. Downloaded, converted to raw, resized by the daemon |
+| DataVolume / CDI | `spec.disk.source` | URL (optional `sha256`) or a file under `~/.kubesilicon/images`. Downloaded, converted to raw, resized by the daemon. Images that reference another file (qcow2 backing or data file) are rejected |
 | cloud-init | `spec.cloudInit.userData` | NoCloud ISO with volume label `cidata` |
 | `virtctl console` / `ssh` | `kubesilicon console` / `ssh` / `ip` | Console talks to a unix socket the launcher serves in the VM directory. `ssh` and `ip` read `status.ip` through `kubectl` |
 | Service for the VM | headless Service + EndpointSlice | Same name as the SiliconVM, owned by it. Gives `<name>.<namespace>.svc` |

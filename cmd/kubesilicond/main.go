@@ -77,7 +77,7 @@ func main() {
 		return workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())
 	}
 	d := &daemon{c: c, root: *root, vms: map[string]*proc{}, jobs: map[string]*proc{}, q: newQ(), jq: newQ()}
-	for _, sub := range []string{"cache", "vms", "jobs"} {
+	for _, sub := range []string{"cache", "images", "vms", "jobs"} {
 		if err := os.MkdirAll(filepath.Join(d.root, sub), 0o755); err != nil {
 			log.Fatal(err)
 		}
@@ -249,7 +249,8 @@ func (d *daemon) provision(key string, u *unstructured.Unstructured) (*proc, err
 	}
 	disk := filepath.Join(dir, "disk.raw")
 	if _, err := os.Stat(disk); err != nil { // the disk persists across stop/start
-		if err := image.Disk(src, filepath.Join(d.root, "cache"), disk, size); err != nil {
+		sum, _, _ := unstructured.NestedString(spec, "disk", "sha256")
+		if err := image.Disk(src, sum, filepath.Join(d.root, "cache"), filepath.Join(d.root, "images"), disk, size); err != nil {
 			os.Remove(disk)
 			return nil, err
 		}
