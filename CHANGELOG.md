@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/Matheus-Thurler/KubeSilicon/compare/v0.3.2...v0.4.0) (2026-11-11)
+
+
+### Features
+
+* **job:** run jobs in parallel when their memory fits ([05084d3](https://github.com/Matheus-Thurler/KubeSilicon/commit/05084d3355b8ebf798a404a720f13114c3cc9d3a))
+* **job:** run jobs in parallel when their memory fits ([371ae9c](https://github.com/Matheus-Thurler/KubeSilicon/commit/371ae9c031637c48e2a99259686abcd2ce9dde65))
+
+
+### Bug Fixes
+
+* **job:** drop the stale memory sample on retry and the empty peak line ([52cd96c](https://github.com/Matheus-Thurler/KubeSilicon/commit/52cd96c2eedd04bfb6a754ce2b2293dee9f4350f))
+
 ## [0.3.2](https://github.com/Matheus-Thurler/KubeSilicon/compare/v0.3.1...v0.3.2) (2026-11-11)
 
 
