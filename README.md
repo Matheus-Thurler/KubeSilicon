@@ -184,6 +184,14 @@ hack/e2e.sh            # full cycle against a cluster; needs a kubeconfig contex
 
 Contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Articles
+
+Write-ups with the reasoning and the measurements behind each release (also in Portuguese on the same site):
+
+- [KubeVirt does not run on Apple Silicon, so I built KubeSilicon](https://matheusthurler.com.br/posts/kubevirt-on-apple-silicon-kubesilicon/): why KubeSilicon exists and how a `SiliconVM` boots.
+- [Training on the Mac GPU from Kubeflow Pipelines](https://matheusthurler.com.br/posts/kubeflow-pipelines-apple-silicon-gpu-kubesilicon/): `SiliconJob`, the Fashion-MNIST pipeline and the GPU vs CPU benchmarks (v0.3).
+- [Running GPU jobs in parallel on one Mac](https://matheusthurler.com.br/posts/parallel-gpu-jobs-mac-kubesilicon/): the memory-based queue and the per-job limit (v0.4).
+
 ## Sponsor
 
 If KubeSilicon is useful to you, you can support its development through [GitHub Sponsors](https://github.com/sponsors/Matheus-Thurler).
