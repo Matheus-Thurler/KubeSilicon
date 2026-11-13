@@ -184,6 +184,10 @@ hack/e2e.sh            # full cycle against a cluster; needs a kubeconfig contex
 
 Contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Sponsor
+
+If KubeSilicon is useful to you, you can support its development through [GitHub Sponsors](https://github.com/sponsors/Matheus-Thurler).
+
 ## Disclaimer
 
 KubeSilicon is an independent project. It is not affiliated with or endorsed by Apple Inc. or the KubeVirt project. Apple, Mac, macOS and Apple Silicon are trademarks of Apple Inc. Running macOS guests is subject to Apple's license terms; this project only runs Linux guests.
