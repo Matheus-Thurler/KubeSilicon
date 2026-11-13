@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -100,8 +101,8 @@ func execJob(dir string) (int, string) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	signal.Ignore(syscall.SIGHUP)
-	terminated := false
-	go func() { <-sig; terminated = true; cancel() }()
+	var terminated atomic.Bool
+	go func() { <-sig; terminated.Store(true); cancel() }()
 
 	work := filepath.Join(dir, "work")
 	os.MkdirAll(filepath.Join(work, "tmp"), 0o755)
@@ -127,7 +128,7 @@ func execJob(dir string) (int, string) {
 		c := exec.CommandContext(ctx, a[0], a[1:]...)
 		c.Stdout, c.Stderr = logf, logf
 		if err := c.Run(); err != nil {
-			return end(ctx, terminated, 1, "environment setup failed: "+err.Error())
+			return end(ctx, terminated.Load(), 1, "environment setup failed: "+err.Error())
 		}
 	}
 
@@ -206,7 +207,7 @@ wait:
 		return 137, fmt.Sprintf("memory limit exceeded: used %s, spec.memory is %s", gib(peak), s.Memory)
 	}
 	if ctx.Err() != nil {
-		return end(ctx, terminated, 1, "")
+		return end(ctx, terminated.Load(), 1, "")
 	}
 	if werr != nil {
 		if ee, ok := werr.(*exec.ExitError); ok {
