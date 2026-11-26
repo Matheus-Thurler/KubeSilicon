@@ -7,7 +7,7 @@ KubeSilicon gives a local Kubernetes cluster on a Mac the KubeVirt workflow (dec
 | Topic | Decision |
 |---|---|
 | Guests | Linux ARM64. macOS guests are out of scope for now |
-| Cluster | A local cluster such as kind, one Mac. The API already carries `nodeName` room for a fleet later |
+| Cluster | A local cluster such as kind, one Mac. A fleet would need a `nodeName` field, not implemented |
 | API | Own group `kubesilicon.io/v1`, shape similar to KubeVirt. Not a drop-in for `kubevirt.io` |
 | Language | Go. [`Code-Hex/vz`](https://github.com/Code-Hex/vz) binds `Virtualization.framework` (cgo) |
 | Out of scope for v1 | live migration, hotplug, GPU passthrough, snapshots, macOS guests |
@@ -142,7 +142,7 @@ Known gaps: `kfp-metadata-writer` has no arm64 image, so it is scaled to 0 (no l
 
 - One worker: provisioning a VM (a large download) delays the others.
 - If the launcher crashes the VM is gone and the object says `Stopped`; there is no automatic restart. - The Service has no ports (headless, name resolution only).
-- Changing `cpu`, `memory` or `cloudInit` does not affect a VM that already exists. Stop and start does not re-read the CPU or memory.
+- Changing `cpu`, `memory` or `cloudInit` does not affect a running VM. Stop and start provisions it again from the spec, so the change applies on the next start (the disk is kept).
 - No `conditions` yet, only `phase` and `message`.
 - Without `userData` the VM has no user you can log in with.
 - The console is a text serial line: no window, no VNC. One client at a time; a new one replaces the old.

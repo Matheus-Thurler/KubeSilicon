@@ -73,4 +73,3 @@ Not tested: an actual login/reboot.
 - KubeVirt inside Lima with nested virtualization.
 - Bridged networking.
 - Colima and OrbStack as the container runtime.
-- Daemon crash (not a clean stop): the VMs die with it and the object keeps its last status until the daemon is back.

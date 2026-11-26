@@ -19,7 +19,7 @@ const usage = `usage: kubesilicon [-context C] [-n NAMESPACE] <command> NAME [ar
   ip NAME                  print the VM IP
   ssh NAME [-- ssh args]   ssh to the VM (default user ubuntu, see -l)
   console NAME             serial console, leave with Ctrl-]
-  logs NAME                print the log of a SiliconJob (-n default: "default")
+  logs NAME                print the log of a SiliconJob (default namespace: the one of the context)
 
 flags:
 `
@@ -44,7 +44,9 @@ func main() {
 	if cmd == "logs" {
 		n := *ns
 		if n == "" {
-			n = "default"
+			var err error
+			n, err = contextNamespace(*kctx)
+			fatal(err)
 		}
 		b, err := os.ReadFile(filepath.Join(*root, "jobs", n+"_"+name, "job.log"))
 		fatal(err)
@@ -96,6 +98,21 @@ func lookup(kctx, ns, name string) (namespace, ip string, err error) {
 	}
 	namespace, ip, _ = strings.Cut(string(out), "\t")
 	return namespace, ip, nil
+}
+
+// contextNamespace returns the namespace of the kubeconfig context, "default" when it has none, as kubectl does.
+func contextNamespace(kctx string) (string, error) {
+	out, err := exec.Command("kubectl", "--context", kctx, "config", "view", "--minify", "-o", "jsonpath={..namespace}").Output()
+	if ee, ok := err.(*exec.ExitError); ok {
+		return "", fmt.Errorf("kubectl: %s", strings.TrimSpace(string(ee.Stderr)))
+	}
+	if err != nil {
+		return "", err
+	}
+	if ns := strings.TrimSpace(string(out)); ns != "" {
+		return ns, nil
+	}
+	return "default", nil
 }
 
 // console attaches the terminal to the VM serial socket. Ctrl-] leaves; stdin EOF leaves too.
