@@ -41,14 +41,14 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	u, err := api.Get(ctx, name, metav1.GetOptions{})
 	if errors.IsNotFound(err) {
 		d.stopJob(key)
-		return 0, os.RemoveAll(dir)
+		return 0, removeJob(dir)
 	}
 	if err != nil {
 		return 0, err
 	}
 	if u.GetDeletionTimestamp() != nil {
 		d.stopJob(key)
-		if err := os.RemoveAll(dir); err != nil {
+		if err := removeJob(dir); err != nil {
 			return 0, err
 		}
 		return 0, patchFinalizers(ctx, api, u, remove(u.GetFinalizers(), jobFinalizer))
@@ -148,6 +148,12 @@ func exitPhase(code int, msg string) string {
 		return "Cancelled"
 	}
 	return "Failed"
+}
+
+// removeJob drops the local state of a job, including the temp dir a killed runner leaves behind.
+func removeJob(dir string) error {
+	os.RemoveAll(tmpDir(dir))
+	return os.RemoveAll(dir)
 }
 
 func attempts(u *unstructured.Unstructured) int {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -105,7 +106,15 @@ func execJob(dir string) (int, string) {
 	go func() { <-sig; terminated.Store(true); cancel() }()
 
 	work := filepath.Join(dir, "work")
-	os.MkdirAll(filepath.Join(work, "tmp"), 0o755)
+	os.MkdirAll(work, 0o755)
+	// TMPDIR is short on purpose: multiprocessing puts unix sockets there, and their path
+	// cannot exceed 104 bytes, which a directory under the job dir easily does.
+	tmp := tmpDir(dir)
+	os.RemoveAll(tmp)
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		return 1, err.Error()
+	}
+	defer os.RemoveAll(tmp)
 	for _, in := range s.Inputs {
 		p, err := artifact.Path(work, in.Path)
 		if err == nil {
@@ -152,7 +161,7 @@ func execJob(dir string) (int, string) {
 		ro = append(ro, filepath.Dir(filepath.Dir(py))) // the interpreter's install prefix
 	}
 	prof := filepath.Join(dir, "profile.sb")
-	if err := os.WriteFile(prof, []byte(sandbox.Profile(home, []string{work}, ro)), 0o600); err != nil {
+	if err := os.WriteFile(prof, []byte(sandbox.Profile(home, []string{work, tmp}, ro)), 0o600); err != nil {
 		return 1, err.Error()
 	}
 	cmd := exec.Command("/usr/bin/nice", append([]string{"-n", "10"}, sandbox.Argv(prof, argv)...)...)
@@ -161,7 +170,7 @@ func execJob(dir string) (int, string) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Minimal environment: nothing from the daemon (tokens, keys) reaches user code.
 	cmd.Env = []string{
-		"PATH=" + filepath.Join(venv, "bin") + ":/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + filepath.Join(work, "tmp"),
+		"PATH=" + filepath.Join(venv, "bin") + ":/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + tmp,
 		"VIRTUAL_ENV=" + venv, "PYTHONDONTWRITEBYTECODE=1", "PYTORCH_ENABLE_MPS_FALLBACK=1", "PYTHONUNBUFFERED=1",
 	}
 	say("run %v", argv)
@@ -227,6 +236,11 @@ wait:
 		}
 	}
 	return 0, "done"
+}
+
+// tmpDir is the job's temporary directory, the same for every attempt of the job.
+func tmpDir(dir string) string {
+	return fmt.Sprintf("/private/tmp/ks-%x", sha256.Sum256([]byte(dir)))[:32]
 }
 
 // end maps a cancelled context to the right exit: SIGTERM from the daemon, or the timeout.
