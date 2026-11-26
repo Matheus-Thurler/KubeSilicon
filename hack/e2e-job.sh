@@ -63,7 +63,7 @@ wait_phase e2e-queued Succeeded
 ok "cancel works and the queue moves on"
 
 # interruption (what a Mac reboot looks like: runner and script vanish without a result)
-kill_job() { pkill -9 -f "jobs/default_$1" || true; }
+kill_job() { pkill -9 -f "jobs/[^/ ]*_$1" || true; }  # the context decides the namespace
 mk e2e-retry "  script: |
     import time; time.sleep(8); print('survived the interruption')"
 wait_phase e2e-retry Running; sleep 3; kill_job e2e-retry

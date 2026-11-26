@@ -13,9 +13,11 @@ spec:
       subresources: { status: {} }
       additionalPrinterColumns:
         - { name: Phase, type: string, jsonPath: .status.phase }
+        - { name: Ready, type: string, jsonPath: '.status.conditions[?(@.type=="Ready")].status' }
         - { name: IP, type: string, jsonPath: .status.ip }
         - { name: CPU, type: integer, jsonPath: .spec.cpu }
         - { name: Memory, type: string, jsonPath: .spec.memory }
+        - { name: Restarts, type: integer, jsonPath: .status.restartCount, priority: 1 }
         - { name: Age, type: date, jsonPath: .metadata.creationTimestamp }
       schema:
         openAPIV3Schema:
@@ -28,6 +30,9 @@ spec:
                 running: { type: boolean, default: true }
                 cpu: { type: integer, minimum: 1, default: 2 }
                 memory: { type: string, default: 2Gi }
+                restartPolicy: { type: string, enum: [Never, OnFailure, Always], default: Never, description: "what to do when the VM is down while running is true: OnFailure restarts after a crash, Always also after the guest shuts itself down" }
+                readinessPort: { type: integer, minimum: 1, maximum: 65535, default: 22, description: "the Ready condition is True while the guest accepts TCP connections on this port" }
+                nestedVirtualization: { type: boolean, default: false, description: "expose /dev/kvm to the guest (M3 or newer, macOS 15 or newer)" }
                 disk:
                   type: object
                   required: [source]
@@ -45,3 +50,14 @@ spec:
                 phase: { type: string }
                 ip: { type: string }
                 message: { type: string }
+                restartCount: { type: integer, description: "times restartPolicy started the VM again" }
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required: [type, status]
+                    properties:
+                      type: { type: string }
+                      status: { type: string }
+                      reason: { type: string }
+                      lastTransitionTime: { type: string, format: date-time }

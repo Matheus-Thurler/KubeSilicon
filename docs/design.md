@@ -20,7 +20,10 @@ KubeSilicon gives a local Kubernetes cluster on a Mac the KubeVirt workflow (dec
 | virt-controller (creates the launcher pod) | not needed | There is no pod: the VM runs on the host |
 | virt-handler (reconciles on the node) | `kubesilicond` | One daemon on macOS, informer plus work queue, `client-go` dynamic client |
 | virt-launcher (QEMU in a pod) | `kubesilicond launch` | One detached process per VM (own session), spawned by the daemon. It owns the VM through `internal/vm` |
-| VirtualMachine / VMI | `SiliconVM` | One kind. `spec.running` starts and stops. `status.phase`, `ip`, `message` |
+| VirtualMachine / VMI | `SiliconVM` | One kind. `spec.running` starts and stops. `status.phase`, `ip`, `message`, `conditions`, `restartCount` |
+| `runStrategy` | `spec.running` + `spec.restartPolicy` | `Never` (default), `OnFailure`, `Always`. The launcher writes how the guest ended, so a clean shutdown and a crash are told apart |
+| `readinessProbe` | `spec.readinessPort` | TCP only, default 22. Sets the `Ready` condition, so `kubectl wait --for=condition=Ready` works |
+| `virtctl start` / `stop` / `restart` | `kubesilicon start` / `stop` / `restart` | Patches `spec.running` through `kubectl` |
 | DataVolume / CDI | `spec.disk.source` | URL (optional `sha256`) or a file under `~/.kubesilicon/images`. Downloaded, converted to raw, resized by the daemon. Images that reference another file (qcow2 backing or data file) are rejected |
 | cloud-init | `spec.cloudInit.userData` | NoCloud ISO with volume label `cidata` |
 | `virtctl console` / `ssh` | `kubesilicon console` / `ssh` / `ip` | Console talks to a unix socket the launcher serves in the VM directory. `ssh` and `ip` read `status.ip` through `kubectl` |
@@ -33,13 +36,14 @@ There is one binary and no separate operator. The CRD is applied with `kubectl`.
 ```
 create -> finalizer -> Provisioning -> Starting -> Running (status.ip)
 running=false -> ACPI shutdown (20 s) then forced -> Stopped (disk kept, ip cleared)
+VM down while running=true -> Stopped, or Restarting -> Provisioning if restartPolicy asks for it
 running=true  -> same disk, boots again
 delete -> stop VM -> remove ~/.kubesilicon/vms/<ns>_<name> -> drop finalizer (Service and EndpointSlice are garbage-collected)
 ```
 
 ### Launcher processes
 
-The daemon starts `kubesilicond launch ...` with `Setsid`, writes its pid to `<vm dir>/pid` and sends `SIGTERM` to stop it (the launcher asks the guest to shut down, waits up to 20 s, then forces). Stopping, restarting or killing the daemon leaves the launchers, and so the VMs, running. A new daemon reads the pid file and adopts a launcher only if the process is alive and its command line is `... launch ...` with the VM directory, which guards against pid reuse. If a launcher dies, the object goes to `Stopped` with a pointer to `launcher.log` and `console.log`.
+The daemon starts `kubesilicond launch ...` with `Setsid`, writes its pid to `<vm dir>/pid` and sends `SIGTERM` to stop it (the launcher asks the guest to shut down, waits up to 20 s, then forces). Stopping, restarting or killing the daemon leaves the launchers, and so the VMs, running. A new daemon reads the pid file and adopts a launcher only if the process is alive and its command line is `... launch ...` with the VM directory, which guards against pid reuse. If a launcher dies, the object goes to `Stopped` with a pointer to `launcher.log` and `console.log`, or to `Restarting` under `restartPolicy`.
 
 ### Orphans and the LaunchAgent
 
@@ -68,7 +72,7 @@ Guest hostname is `<name>-<first 8 chars of the UID>`. The VM IP comes from the 
 - **Phase 1, done:** CRD, reconciler, full lifecycle, end-to-end test.
 - **Phase 2, done:** one process per VM, DNS per VM, the `kubesilicon` client, the LaunchAgent and orphan cleanup.
 - **Phase 3:** list what virtifoundry-style workloads use from KubeVirt and cover the gaps.
-- **Later:** several Macs as nodes (Virtual Kubelet), nested virtualization, snapshots, macOS guests.
+- **Later:** several Macs as nodes (Virtual Kubelet), snapshots, macOS guests.
 
 ## Plan: native GPU jobs (`SiliconJob`)
 
@@ -140,9 +144,10 @@ Known gaps: `kfp-metadata-writer` has no arm64 image, so it is scaled to 0 (no l
 
 - One state directory per cluster. `kubesilicond` treats every directory under `~/.kubesilicon/vms` and `jobs` that has no object in *its* cluster as an orphan and removes it. Two daemons on different clusters must use different `-root` values.
 
-- One worker: provisioning a VM (a large download) delays the others.
-- If the launcher crashes the VM is gone and the object says `Stopped`; there is no automatic restart. - The Service has no ports (headless, name resolution only).
+- Four VM workers: that many simultaneous large downloads delay the others.
+- With `restartPolicy: Never` a daemon restart still boots a VM whose launcher died while the daemon was away (a Mac reboot relies on this). A guest that shut itself down stays stopped.
+- The Service has no ports (headless, name resolution only).
 - Changing `cpu`, `memory` or `cloudInit` does not affect a running VM. Stop and start provisions it again from the spec, so the change applies on the next start (the disk is kept).
-- No `conditions` yet, only `phase` and `message`.
+- One condition, `Ready`.
 - Without `userData` the VM has no user you can log in with.
 - The console is a text serial line: no window, no VNC. One client at a time; a new one replaces the old.
