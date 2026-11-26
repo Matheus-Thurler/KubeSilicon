@@ -31,8 +31,8 @@ func Footprint(pgid int) uint64 {
 
 // Available returns the memory the kernel reports as available (the number behind the memory
 // pressure gauge) and the physical total, in bytes.
-// ponytail: one noisy sample, 1% steps. Good enough to decide whether a job may start; the
-// per-job limit is what is enforced. Average several samples if admission flaps.
+// ponytail: noisy, 1% steps, and it measures pressure rather than bytes. The queue takes the
+// lower of two readings; the per-job limit is what is enforced.
 func Available() (avail, total uint64) {
 	total, _ = unix.SysctlUint64("hw.memsize")
 	level, _ := unix.SysctlUint32("kern.memorystatus_level")

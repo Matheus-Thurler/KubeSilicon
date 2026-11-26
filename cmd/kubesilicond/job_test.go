@@ -1,8 +1,14 @@
 package main
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestAdmission(t *testing.T) {
@@ -53,5 +59,99 @@ func TestJobSpecMemory(t *testing.T) {
 		if (jobSpec{Python: "3.12", Memory: m}).validate() == nil {
 			t.Errorf("accepted memory %q", m)
 		}
+	}
+}
+
+func TestKillStaleKillsTheScriptGroup(t *testing.T) {
+	dir := t.TempDir()
+	c := exec.Command("sleep", "60")
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "pgid"), []byte(strconv.Itoa(c.Process.Pid)), 0o644)
+	killStale(dir)
+	done := make(chan error, 1)
+	go func() { done <- c.Wait() }()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("sleep exited normally")
+		}
+	case <-time.After(5 * time.Second):
+		c.Process.Kill()
+		t.Fatal("the group survived")
+	}
+	killStale(t.TempDir()) // no pgid file: nothing happens
+}
+
+func TestExitPhase(t *testing.T) {
+	for _, c := range []struct {
+		code int
+		msg  string
+		want string
+	}{
+		{0, "done", "Succeeded"},
+		{1, "command exited with 1", "Failed"},
+		{130, "command exited with 130", "Failed"},
+		{130, cancelMsg, "Cancelled"},
+	} {
+		if got := exitPhase(c.code, c.msg); got != c.want {
+			t.Errorf("%d %q: got %s, want %s", c.code, c.msg, got, c.want)
+		}
+	}
+}
+
+func TestJobStatusTimes(t *testing.T) {
+	run := jobStatus(nil, "Running", "", "", 0, -1, "t1")
+	if run["startTime"] != "t1" || run["completionTime"] != nil {
+		t.Fatalf("running: %v", run)
+	}
+	run = jobStatus(run, "Running", "", "log", 0, -1, "t2")
+	if run["startTime"] != "t1" {
+		t.Fatalf("startTime moved: %v", run)
+	}
+	fail := jobStatus(run, "Failed", "x", "", 0, 3, "t3")
+	if fail["startTime"] != "t1" || fail["completionTime"] != "t3" || fail["exitCode"] != int64(3) {
+		t.Fatalf("failed: %v", fail)
+	}
+	if again := jobStatus(fail, "Failed", "x", "", 0, 3, "t4"); again["completionTime"] != "t3" {
+		t.Fatalf("completionTime moved: %v", again)
+	}
+	if c := jobStatus(run, "Cancelled", "x", "", 0, 130, "t3"); c["exitCode"] != nil {
+		t.Fatalf("cancel has no script exit code: %v", c)
+	}
+	if p := jobStatus(run, "Pending", "retry", "", 1, -1, "t5"); p["startTime"] != nil {
+		t.Fatalf("pending keeps startTime: %v", p)
+	}
+}
+
+func TestKillStaleIgnoresPgidFromBeforeBoot(t *testing.T) {
+	c := exec.Command("sleep", "30")
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { c.Wait(); close(done) }()
+	defer c.Process.Kill()
+	dir := t.TempDir()
+	f := filepath.Join(dir, "pgid")
+	os.WriteFile(f, []byte(strconv.Itoa(c.Process.Pid)), 0o644)
+	old := time.Unix(1, 0)
+	os.Chtimes(f, old, old)
+	killStale(dir)
+	select {
+	case <-done:
+		t.Fatal("killed a group recorded before the boot")
+	case <-time.After(200 * time.Millisecond):
+	}
+	now := time.Now()
+	os.Chtimes(f, now, now)
+	killStale(dir)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("group of this boot not killed")
 	}
 }

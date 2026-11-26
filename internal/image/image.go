@@ -4,9 +4,11 @@ package image
 import (
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -100,13 +102,18 @@ func fetch(url, sum, cacheDir string) (string, error) {
 	if _, err := os.Stat(p); err == nil {
 		return p, nil
 	}
+	shown, _, _ := strings.Cut(url, "?") // a presigned URL keeps its signature in the query
 	resp, err := client.Get(url)
 	if err != nil {
+		var ue *neturl.Error
+		if errors.As(err, &ue) {
+			ue.URL = shown
+		}
 		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("GET %s: %s", url, resp.Status)
+		return "", fmt.Errorf("GET %s: %s", shown, resp.Status)
 	}
 	f, err := os.CreateTemp(cacheDir, "dl-*")
 	if err != nil {
@@ -122,7 +129,7 @@ func fetch(url, sum, cacheDir string) (string, error) {
 		return "", err
 	}
 	if got := fmt.Sprintf("%x", h.Sum(nil)); sum != "" && !strings.EqualFold(got, sum) {
-		return "", fmt.Errorf("GET %s: sha256 is %s, spec.disk.sha256 says %s", url, got, sum)
+		return "", fmt.Errorf("GET %s: sha256 is %s, spec.disk.sha256 says %s", shown, got, sum)
 	}
 	return p, os.Rename(f.Name(), p)
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -100,19 +102,27 @@ func execJob(dir string) (int, string) {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGTERM, syscall.SIGINT)
 	signal.Ignore(syscall.SIGHUP)
-	terminated := false
-	go func() { <-sig; terminated = true; cancel() }()
+	var terminated atomic.Bool
+	go func() { <-sig; terminated.Store(true); cancel() }()
 
 	work := filepath.Join(dir, "work")
-	os.MkdirAll(filepath.Join(work, "tmp"), 0o755)
+	os.MkdirAll(work, 0o755)
+	// TMPDIR is short on purpose: multiprocessing puts unix sockets there, and their path
+	// cannot exceed 104 bytes, which a directory under the job dir easily does.
+	tmp := tmpDir(dir)
+	os.RemoveAll(tmp)
+	if err := os.Mkdir(tmp, 0o700); err != nil {
+		return 1, err.Error()
+	}
+	defer os.RemoveAll(tmp)
 	for _, in := range s.Inputs {
 		p, err := artifact.Path(work, in.Path)
 		if err == nil {
 			say("input %s", in.Path)
-			err = artifact.Download(in.URL, p)
+			err = artifact.Download(ctx, in.URL, p)
 		}
 		if err != nil {
-			return 1, "input: " + err.Error()
+			return end(ctx, terminated.Load(), 1, "input: "+err.Error())
 		}
 	}
 
@@ -127,7 +137,7 @@ func execJob(dir string) (int, string) {
 		c := exec.CommandContext(ctx, a[0], a[1:]...)
 		c.Stdout, c.Stderr = logf, logf
 		if err := c.Run(); err != nil {
-			return end(ctx, terminated, 1, "environment setup failed: "+err.Error())
+			return end(ctx, terminated.Load(), 1, "environment setup failed: "+err.Error())
 		}
 	}
 
@@ -151,7 +161,7 @@ func execJob(dir string) (int, string) {
 		ro = append(ro, filepath.Dir(filepath.Dir(py))) // the interpreter's install prefix
 	}
 	prof := filepath.Join(dir, "profile.sb")
-	if err := os.WriteFile(prof, []byte(sandbox.Profile(home, []string{work}, ro)), 0o600); err != nil {
+	if err := os.WriteFile(prof, []byte(sandbox.Profile(home, []string{work, tmp}, ro)), 0o600); err != nil {
 		return 1, err.Error()
 	}
 	cmd := exec.Command("/usr/bin/nice", append([]string{"-n", "10"}, sandbox.Argv(prof, argv)...)...)
@@ -160,13 +170,14 @@ func execJob(dir string) (int, string) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Minimal environment: nothing from the daemon (tokens, keys) reaches user code.
 	cmd.Env = []string{
-		"PATH=" + filepath.Join(venv, "bin") + ":/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + filepath.Join(work, "tmp"),
+		"PATH=" + filepath.Join(venv, "bin") + ":/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + tmp,
 		"VIRTUAL_ENV=" + venv, "PYTHONDONTWRITEBYTECODE=1", "PYTORCH_ENABLE_MPS_FALLBACK=1", "PYTHONUNBUFFERED=1",
 	}
 	say("run %v", argv)
 	if err := cmd.Start(); err != nil {
 		return 1, err.Error()
 	}
+	os.WriteFile(filepath.Join(dir, "pgid"), []byte(strconv.Itoa(cmd.Process.Pid)), 0o644) // Setpgid: group id = pid
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	// The watchdog is the memory limit macOS does not have (no cgroups): it measures the job's
@@ -206,7 +217,7 @@ wait:
 		return 137, fmt.Sprintf("memory limit exceeded: used %s, spec.memory is %s", gib(peak), s.Memory)
 	}
 	if ctx.Err() != nil {
-		return end(ctx, terminated, 1, "")
+		return end(ctx, terminated.Load(), 1, "")
 	}
 	if werr != nil {
 		if ee, ok := werr.(*exec.ExitError); ok {
@@ -218,13 +229,18 @@ wait:
 		p, err := artifact.Path(work, o.Path)
 		if err == nil {
 			say("output %s", o.Path)
-			err = artifact.Upload(p, o.URL)
+			err = artifact.Upload(ctx, p, o.URL)
 		}
 		if err != nil {
-			return 1, "output: " + err.Error()
+			return end(ctx, terminated.Load(), 1, "output: "+err.Error())
 		}
 	}
 	return 0, "done"
+}
+
+// tmpDir is the job's temporary directory, the same for every attempt of the job.
+func tmpDir(dir string) string {
+	return fmt.Sprintf("/private/tmp/ks-%x", sha256.Sum256([]byte(dir)))[:32]
 }
 
 // end maps a cancelled context to the right exit: SIGTERM from the daemon, or the timeout.

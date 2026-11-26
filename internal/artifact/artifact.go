@@ -4,9 +4,12 @@
 package artifact
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,17 +24,21 @@ func Path(dir, rel string) (string, error) {
 	return p, nil
 }
 
-func Download(url, dest string) error {
+func Download(ctx context.Context, src, dest string) error {
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return err
 	}
-	r, err := http.Get(url)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, src, nil)
 	if err != nil {
-		return err
+		return clean(err)
+	}
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return clean(err)
 	}
 	defer r.Body.Close()
 	if r.StatusCode/100 != 2 {
-		return fmt.Errorf("GET %s: %s", redact(url), r.Status)
+		return fmt.Errorf("GET %s: %s", redact(src), r.Status)
 	}
 	f, err := os.Create(dest)
 	if err != nil {
@@ -42,7 +49,7 @@ func Download(url, dest string) error {
 	return err
 }
 
-func Upload(src, url string) error {
+func Upload(ctx context.Context, src, dst string) error {
 	f, err := os.Open(src)
 	if err != nil {
 		return err
@@ -52,20 +59,29 @@ func Upload(src, url string) error {
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequest(http.MethodPut, url, f)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, dst, f)
 	if err != nil {
-		return err
+		return clean(err)
 	}
 	req.ContentLength = st.Size()
 	r, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return clean(err)
 	}
 	defer r.Body.Close()
 	if r.StatusCode/100 != 2 {
-		return fmt.Errorf("PUT %s: %s", redact(url), r.Status)
+		return fmt.Errorf("PUT %s: %s", redact(dst), r.Status)
 	}
 	return nil
+}
+
+// clean redacts the URL inside a transport error, which ends up in status.message.
+func clean(err error) error {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = redact(ue.URL)
+	}
+	return err
 }
 
 // redact drops the query string: presigned URLs carry the signature there.

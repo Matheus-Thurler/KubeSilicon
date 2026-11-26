@@ -51,6 +51,6 @@ func (d *daemon) cleanupJobs(store cache.Store) {
 		if p := adopt(dir, "runjob"); p != nil {
 			p.stop()
 		}
-		os.RemoveAll(dir)
+		removeJob(dir)
 	}
 }

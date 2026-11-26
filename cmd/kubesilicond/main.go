@@ -48,6 +48,9 @@ type daemon struct {
 
 	jstore  cache.Store // SiliconJobs, for the queue order
 	reserve uint64      // memory the job queue never hands out
+
+	lastAvail uint64                          // previous memory reading; only the job worker touches it
+	runner    func(dir string) (*proc, error) // starts the job runner; nil: the real one (a seam for tests)
 }
 
 func main() {

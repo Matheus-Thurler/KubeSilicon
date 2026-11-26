@@ -21,6 +21,17 @@ spec:
           properties:
             spec:
               type: object
+              x-kubernetes-validations:
+                - { rule: "(has(self.script) && size(self.script) > 0) || (has(self.command) && size(self.command) > 0)", message: "script or command is required" }
+                - { rule: "has(self.python) == has(oldSelf.python) && (!has(self.python) || self.python == oldSelf.python)", message: "spec.python cannot change after creation; only spec.running can" }
+                - { rule: "has(self.dependencies) == has(oldSelf.dependencies) && (!has(self.dependencies) || self.dependencies == oldSelf.dependencies)", message: "spec.dependencies cannot change after creation; only spec.running can" }
+                - { rule: "has(self.script) == has(oldSelf.script) && (!has(self.script) || self.script == oldSelf.script)", message: "spec.script cannot change after creation; only spec.running can" }
+                - { rule: "has(self.command) == has(oldSelf.command) && (!has(self.command) || self.command == oldSelf.command)", message: "spec.command cannot change after creation; only spec.running can" }
+                - { rule: "has(self.timeoutSeconds) == has(oldSelf.timeoutSeconds) && (!has(self.timeoutSeconds) || self.timeoutSeconds == oldSelf.timeoutSeconds)", message: "spec.timeoutSeconds cannot change after creation; only spec.running can" }
+                - { rule: "has(self.memory) == has(oldSelf.memory) && (!has(self.memory) || self.memory == oldSelf.memory)", message: "spec.memory cannot change after creation; only spec.running can" }
+                - { rule: "has(self.backoffLimit) == has(oldSelf.backoffLimit) && (!has(self.backoffLimit) || self.backoffLimit == oldSelf.backoffLimit)", message: "spec.backoffLimit cannot change after creation; only spec.running can" }
+                - { rule: "has(self.inputs) == has(oldSelf.inputs) && (!has(self.inputs) || self.inputs == oldSelf.inputs)", message: "spec.inputs cannot change after creation; only spec.running can" }
+                - { rule: "has(self.outputs) == has(oldSelf.outputs) && (!has(self.outputs) || self.outputs == oldSelf.outputs)", message: "spec.outputs cannot change after creation; only spec.running can" }
               properties:
                 running: { type: boolean, default: true, description: "false cancels the job" }
                 python: { type: string, default: "3.12", pattern: '^3\.\d+(\.\d+)?$', description: "Python version, not a path" }
@@ -59,3 +70,6 @@ spec:
                 message: { type: string }
                 logTail: { type: string, description: "last 4 KiB of the job log" }
                 attempts: { type: integer, description: "times the runner was interrupted and restarted" }
+                startTime: { type: string, format: date-time, description: "when the job went Running" }
+                completionTime: { type: string, format: date-time, description: "when the job reached Succeeded, Failed or Cancelled" }
+                exitCode: { type: integer, description: "exit code of the script, set when one exists" }

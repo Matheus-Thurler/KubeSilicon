@@ -8,10 +8,13 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -38,14 +41,14 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	u, err := api.Get(ctx, name, metav1.GetOptions{})
 	if errors.IsNotFound(err) {
 		d.stopJob(key)
-		return 0, os.RemoveAll(dir)
+		return 0, removeJob(dir)
 	}
 	if err != nil {
 		return 0, err
 	}
 	if u.GetDeletionTimestamp() != nil {
 		d.stopJob(key)
-		if err := os.RemoveAll(dir); err != nil {
+		if err := removeJob(dir); err != nil {
 			return 0, err
 		}
 		return 0, patchFinalizers(ctx, api, u, remove(u.GetFinalizers(), jobFinalizer))
@@ -57,22 +60,14 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	}
 
 	if code, msg, done := readExit(dir); done { // terminal
-		phase := "Succeeded"
-		switch code {
-		case 0:
-		case 130:
-			phase = "Cancelled"
-		default:
-			phase = "Failed"
-		}
-		return 0, d.setJobStatus(ctx, api, u, phase, msg)
+		return 0, d.setJobStatusN(ctx, api, u, exitPhase(code, msg), msg, attempts(u), code)
 	}
 
 	running, ok, _ := unstructured.NestedBool(u.Object, "spec", "running")
 	if ok && !running {
 		d.stopJob(key)
-		os.WriteFile(filepath.Join(dir, "exit"), []byte("130 cancelled by spec.running=false"), 0o644)
-		return 0, d.setJobStatus(ctx, api, u, "Cancelled", "cancelled by spec.running=false")
+		os.WriteFile(filepath.Join(dir, "exit"), []byte("130 "+cancelMsg), 0o644)
+		return 0, d.setJobStatus(ctx, api, u, "Cancelled", cancelMsg)
 	}
 
 	p := d.lookupJob(key)
@@ -111,7 +106,8 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	if int64(n) >= limit {
 		return 0, d.setJobStatus(ctx, api, u, "Failed", fmt.Sprintf("interrupted %d time(s) without a result, giving up (see launcher.log in %s)", n+1, dir))
 	}
-	for _, f := range []string{"venv", "work", "pid", "exit", "mem"} {
+	killStale(dir)
+	for _, f := range []string{"venv", "work", "pid", "pgid", "exit", "mem"} {
 		os.RemoveAll(filepath.Join(dir, f))
 	}
 	if f, err := os.OpenFile(filepath.Join(dir, "job.log"), os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
@@ -121,7 +117,43 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 	d.mu.Lock()
 	delete(d.jobs, key)
 	d.mu.Unlock()
-	return time.Second, d.setJobStatusN(ctx, api, u, "Pending", fmt.Sprintf("interrupted, retry %d of %d", n+1, limit), n+1)
+	return time.Second, d.setJobStatusN(ctx, api, u, "Pending", fmt.Sprintf("interrupted, retry %d of %d", n+1, limit), n+1, -1)
+}
+
+// killStale kills the script's process group left by a runner that died (kill -9): without this
+// the retry would run next to it. A pgid written before the last boot is ignored: after a reboot
+// the number may belong to an unrelated process.
+func killStale(dir string) {
+	f := filepath.Join(dir, "pgid")
+	st, err := os.Stat(f)
+	boot, berr := unix.SysctlTimeval("kern.boottime")
+	if err != nil || berr != nil || st.ModTime().Before(time.Unix(boot.Unix())) {
+		return
+	}
+	b, _ := os.ReadFile(f)
+	if pg, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pg > 1 {
+		syscall.Kill(-pg, syscall.SIGKILL)
+	}
+}
+
+const cancelMsg = "cancelled by spec.running=false"
+
+// exitPhase maps the exit file to a phase. Only the daemon's own cancel message means Cancelled:
+// a script can exit 130 by itself, and that is a failure.
+func exitPhase(code int, msg string) string {
+	switch {
+	case code == 0:
+		return "Succeeded"
+	case code == 130 && msg == cancelMsg:
+		return "Cancelled"
+	}
+	return "Failed"
+}
+
+// removeJob drops the local state of a job, including the temp dir a killed runner leaves behind.
+func removeJob(dir string) error {
+	os.RemoveAll(tmpDir(dir))
+	return os.RemoveAll(dir)
 }
 
 func attempts(u *unstructured.Unstructured) int {
@@ -148,6 +180,9 @@ func (d *daemon) startJob(dir string, u *unstructured.Unstructured) (*proc, erro
 			return nil, err
 		}
 	}
+	if d.runner != nil {
+		return d.runner(dir)
+	}
 	return spawn(dir, "runjob", dir)
 }
 
@@ -163,7 +198,13 @@ func (d *daemon) admit(key string, u *unstructured.Unstructured) (string, error)
 	if js.Memory != "" && js.memBytes() == 0 {
 		return "", fmt.Errorf("spec.memory %q must be a positive quantity like 4Gi", js.Memory)
 	}
-	avail, total := mem.Available()
+	// The reading swings by gigabytes from one second to the next: take the lower of the last two.
+	now, total := mem.Available()
+	avail := now
+	if d.lastAvail > 0 {
+		avail = min(now, d.lastAvail)
+	}
+	d.lastAvail = now
 	wait, err := admission(js.memBytes(), d.runningJobs(key), avail, total, d.reserve)
 	if err != nil { // can never run: say so now, not after its turn in the queue
 		return "", err
@@ -281,17 +322,44 @@ func readExit(dir string) (code int, msg string, done bool) {
 const logTail = 4096
 
 func (d *daemon) setJobStatus(ctx context.Context, api dynamic.ResourceInterface, u *unstructured.Unstructured, phase, msg string) error {
-	return d.setJobStatusN(ctx, api, u, phase, msg, attempts(u))
+	return d.setJobStatusN(ctx, api, u, phase, msg, attempts(u), -1)
 }
 
-func (d *daemon) setJobStatusN(ctx context.Context, api dynamic.ResourceInterface, u *unstructured.Unstructured, phase, msg string, n int) error {
+// jobStatus is the new status. startTime is set when the job goes Running and kept until the
+// next Pending (a retry); completionTime and exitCode are set once, at a terminal phase.
+// code < 0: no script exit code. A cancel has none either: its 130 is the daemon's own.
+func jobStatus(cur map[string]any, phase, msg, tail string, n, code int, now string) map[string]any {
+	st := map[string]any{"phase": phase, "message": msg, "logTail": tail, "attempts": int64(n)}
+	keep := func(k string) string {
+		if v, _ := cur[k].(string); v != "" {
+			return v
+		}
+		return now
+	}
+	switch phase {
+	case "Running":
+		st["startTime"] = keep("startTime")
+	case "Succeeded", "Failed", "Cancelled":
+		if v, _ := cur["startTime"].(string); v != "" {
+			st["startTime"] = v
+		}
+		st["completionTime"] = keep("completionTime")
+		if code >= 0 && phase != "Cancelled" {
+			st["exitCode"] = int64(code)
+		}
+	}
+	return st
+}
+
+func (d *daemon) setJobStatusN(ctx context.Context, api dynamic.ResourceInterface, u *unstructured.Unstructured, phase, msg string, n, code int) error {
 	tail := readTail(filepath.Join(d.jobDir(u.GetNamespace()+"/"+u.GetName()), "job.log"), logTail)
 	cur, _, _ := unstructured.NestedMap(u.Object, "status")
-	if cur["phase"] == phase && cur["message"] == msg && cur["logTail"] == tail && attempts(u) == n {
+	st := jobStatus(cur, phase, msg, tail, n, code, time.Now().UTC().Format(time.RFC3339))
+	if reflect.DeepEqual(st, cur) {
 		return nil
 	}
 	u = u.DeepCopy()
-	if err := unstructured.SetNestedField(u.Object, map[string]any{"phase": phase, "message": msg, "logTail": tail, "attempts": int64(n)}, "status"); err != nil {
+	if err := unstructured.SetNestedField(u.Object, st, "status"); err != nil {
 		return err
 	}
 	_, err := api.UpdateStatus(ctx, u, metav1.UpdateOptions{})

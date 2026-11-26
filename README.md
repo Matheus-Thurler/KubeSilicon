@@ -68,7 +68,7 @@ Stopping `kubesilicond` does **not** stop the VMs. Stop a VM with `running: fals
 
 ## GPU jobs (SiliconJob)
 
-A Linux guest cannot reach the Mac GPU, so GPU work runs natively on macOS. A `SiliconJob` runs a Python script in its own `uv` venv, inside a `sandbox-exec` profile (writes only in the job directory, no reads of your home), with PyTorch MPS or MLX. Jobs start in creation order. A job that declares `memory` runs next to others; one that does not runs alone (see [Parallel jobs](#parallel-jobs)).
+A Linux guest cannot reach the Mac GPU, so GPU work runs natively on macOS. A `SiliconJob` runs a Python script in its own `uv` venv, inside a `sandbox-exec` profile (see [What a job can touch](#what-a-job-can-touch)), with PyTorch MPS or MLX. Jobs start in creation order. A job that declares `memory` runs next to others; one that does not runs alone (see [Parallel jobs](#parallel-jobs)).
 
 ```yaml
 apiVersion: kubesilicon.io/v1
@@ -91,6 +91,21 @@ kubesilicon -context kind-<cluster> logs train
 kubectl patch sjob train --type=merge -p '{"spec":{"running":false}}'   # cancel
 hack/e2e-job.sh kind-<cluster>                                          # end-to-end test
 ```
+
+Besides `phase`, `message`, `logTail` and `attempts`, `status` has `startTime` (when the job went Running), `completionTime` (when it ended) and `exitCode` (the script's, when it has one).
+
+### What a job can touch
+
+| Allowed | Denied |
+|---|---|
+| Read and write its work and temporary directories, the Metal shader caches | Writing anywhere else |
+| Its Python environment, system files | Reading your home directory, `/tmp`, `/Volumes` |
+| The IP network, including `localhost` services | Unix sockets outside its own directories (Docker, ssh-agent) |
+| Signals to its own processes | Signals to other processes, `open`, Apple events, `launchctl submit`, preferences, the pasteboard |
+
+This limits what a buggy or careless script can reach. It is **not** a security boundary against hostile code: `sandbox-exec` is deprecated by Apple, everything not listed is allowed, and the network is open. Do not run code you do not trust.
+
+A job needs `script` or `command`, and only `spec.running` can change after it is created: to run something else, create a new job.
 
 ### Parallel jobs
 
