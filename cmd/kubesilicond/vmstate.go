@@ -22,6 +22,9 @@ const (
 
 	exitShutdown = "shutdown"
 	exitError    = "error"
+
+	// reasonHalted is the Ready reason of a VM stopped by spec.running=false; the client waits for it.
+	reasonHalted = "Halted"
 )
 
 // shouldRestart applies spec.restartPolicy. exit is "" when the launcher died without a word.
@@ -104,6 +107,8 @@ func vmStatus(cur map[string]any, phase, ip, msg string, ready bool, restartCoun
 		status, reason = "True", "PortOpen"
 	} else if phase == "Running" {
 		reason = "PortClosed"
+	} else if phase == "Stopped" && msg == "" {
+		reason = reasonHalted
 	}
 	since := now
 	if old, _ := cur["conditions"].([]any); len(old) > 0 {

@@ -58,15 +58,13 @@ func main() {
 	}
 	switch cmd {
 	case "start":
-		fatal(setRunning(*kctx, *ns, name, true))
+		fatal(start(*kctx, *ns, name))
 		return
 	case "stop":
 		fatal(setRunning(*kctx, *ns, name, false))
 		return
 	case "restart":
-		fatal(setRunning(*kctx, *ns, name, false))
-		fatal(kubectl(*kctx, *ns, "wait", "--for=jsonpath={.status.phase}=Stopped", "--timeout=90s", "siliconvm/"+name))
-		fatal(setRunning(*kctx, *ns, name, true))
+		fatal(restart(*kctx, *ns, name))
 		return
 	}
 	namespace, ip, err := lookup(*kctx, *ns, name)
@@ -98,6 +96,30 @@ func main() {
 	}
 }
 
+// start also brings back a VM that is down with spec.running still true (the guest shut itself
+// down, or it crashed): that takes a stop first.
+func start(kctx, ns, name string) error {
+	out, err := get(kctx, ns, name, `{.spec.running} {.status.phase}`)
+	if err != nil {
+		return err
+	}
+	if out == "true Stopped" {
+		return restart(kctx, ns, name)
+	}
+	return setRunning(kctx, ns, name, true)
+}
+
+// restart waits until the daemon has seen the stop before starting again, or it could miss it.
+func restart(kctx, ns, name string) error {
+	if err := setRunning(kctx, ns, name, false); err != nil {
+		return err
+	}
+	if err := kubectl(kctx, ns, "wait", "--for=jsonpath={.status.conditions[0].reason}=Halted", "--timeout=90s", "siliconvm/"+name); err != nil {
+		return err
+	}
+	return setRunning(kctx, ns, name, true)
+}
+
 func setRunning(kctx, ns, name string, on bool) error {
 	return kubectl(kctx, ns, "patch", "siliconvm", name, "--type=merge", "-p", fmt.Sprintf(`{"spec":{"running":%t}}`, on))
 }
@@ -115,20 +137,23 @@ func kubectl(kctx, ns string, args ...string) error {
 
 // lookup reads namespace and status.ip with kubectl, so kubeconfig handling stays in one place.
 func lookup(kctx, ns, name string) (namespace, ip string, err error) {
+	out, err := get(kctx, ns, name, `{.metadata.namespace}{"\t"}{.status.ip}`)
+	namespace, ip, _ = strings.Cut(out, "\t")
+	return namespace, ip, err
+}
+
+// get reads fields of a SiliconVM.
+func get(kctx, ns, name, jsonpath string) (string, error) {
 	args := []string{"--context", kctx}
 	if ns != "" {
 		args = append(args, "-n", ns)
 	}
-	args = append(args, "get", "siliconvm", name, "-o", `jsonpath={.metadata.namespace}{"\t"}{.status.ip}`)
+	args = append(args, "get", "siliconvm", name, "-o", "jsonpath="+jsonpath)
 	out, err := exec.Command("kubectl", args...).Output()
 	if ee, ok := err.(*exec.ExitError); ok {
-		return "", "", fmt.Errorf("kubectl: %s", strings.TrimSpace(string(ee.Stderr)))
+		return "", fmt.Errorf("kubectl: %s", strings.TrimSpace(string(ee.Stderr)))
 	}
-	if err != nil {
-		return "", "", err
-	}
-	namespace, ip, _ = strings.Cut(string(out), "\t")
-	return namespace, ip, nil
+	return string(out), err
 }
 
 // contextNamespace returns the namespace of the kubeconfig context, "default" when it has none, as kubectl does.

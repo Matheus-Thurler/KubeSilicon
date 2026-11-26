@@ -111,10 +111,13 @@ stop_daemon; start_daemon; sleep 25
 assert "still Stopped" test "$(phase)" = Stopped
 
 log "CLI stop, start, restart"
-$CLI stop e2e
-for _ in $(seq 30); do grep -q "guest shut down" <<<"$(field .status.message)" || break; sleep 1; done
+$CLI start e2e          # running is still true here: start has to stop it first
+wait_phase Running; wait_ready; flush
+$CLI stop e2e; wait_phase Stopped
+assert "stopped by request" test "$(field '.status.conditions[0].reason')" = Halted
 $CLI start e2e
 wait_phase Running; wait_ready; before=$(boot_id)
+assert "read the boot id" test -n "$before"
 $CLI restart e2e
 wait_phase Running; wait_ready
 assert "restart is a new boot" new_boot "$before"
