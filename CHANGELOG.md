@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.5.0](https://github.com/Matheus-Thurler/KubeSilicon/compare/v0.4.0...v0.5.0) (2026-11-26)
+
+
+### Features
+
+* **job:** startTime, completionTime and exitCode in status ([a374c37](https://github.com/Matheus-Thurler/KubeSilicon/commit/a374c37606e24018bf005ab8dad774ee2adefccf))
+* **job:** the CRD rejects an empty job and changes to a created job ([66f5477](https://github.com/Matheus-Thurler/KubeSilicon/commit/66f5477c9a59dc6a58851dfb3aa4b031fff87463))
+* **vm:** Ready condition, restartPolicy, nested virtualization and start/stop/restart ([6a53c80](https://github.com/Matheus-Thurler/KubeSilicon/commit/6a53c80126fd3e5d0a86547554c9f1bc8855a385))
+* **vm:** Ready condition, restartPolicy, nested virtualization, parallel workers and start/stop/restart ([30767e0](https://github.com/Matheus-Thurler/KubeSilicon/commit/30767e0980855feeee424117cd84cf8d6b163bba))
+
+
+### Bug Fixes
+
+* **cli:** logs uses the namespace of the context ([22ebfd8](https://github.com/Matheus-Thurler/KubeSilicon/commit/22ebfd8f816f50aba8bf43a11b6e5d5119d9e9a3))
+* **cli:** start brings back a VM whose guest shut itself down ([27d3edd](https://github.com/Matheus-Thurler/KubeSilicon/commit/27d3edd0014fd43b21b862f46440fd3ef8fe37b1))
+* **job:** a script that exits 130 is Failed, not Cancelled ([b0e83a8](https://github.com/Matheus-Thurler/KubeSilicon/commit/b0e83a8338aa479f62d647541dea764d601b78d8))
+* **job:** kill the old process group before a retry ([e4d0795](https://github.com/Matheus-Thurler/KubeSilicon/commit/e4d07959f39af5bd8ef57bc783066b8a12488ba5))
+* **job:** make the terminated flag safe across goroutines ([9939a57](https://github.com/Matheus-Thurler/KubeSilicon/commit/9939a5793b20860f4d8e0829d7e48dc389fe66b8))
+* **job:** redact signed URLs, report SIGTERM during transfers, ignore process groups from before a reboot ([45b2fab](https://github.com/Matheus-Thurler/KubeSilicon/commit/45b2fab9608eb6f1fc498f1cea20ceddf11db2be))
+* **job:** robustness, tighter sandbox and API validation ([c7cc71e](https://github.com/Matheus-Thurler/KubeSilicon/commit/c7cc71ee75e4c50c87926665e69f08e55e1292c1))
+* **job:** the sandbox blocks ways out through other processes ([455b0b3](https://github.com/Matheus-Thurler/KubeSilicon/commit/455b0b31a45ed9ca1dc19a79082a2360ee67055c))
+* **job:** the timeout also covers downloads and uploads ([a7bf9f8](https://github.com/Matheus-Thurler/KubeSilicon/commit/a7bf9f8e7c77e07001efbfbdbe3ad665852dd336))
+
 ## [0.4.0](https://github.com/Matheus-Thurler/KubeSilicon/compare/v0.3.2...v0.4.0) (2026-11-11)
 
 
