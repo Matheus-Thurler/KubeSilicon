@@ -16,6 +16,9 @@ import (
 
 const usage = `usage: kubesilicon [-context C] [-n NAMESPACE] <command> NAME [args]
 
+  start NAME               set spec.running=true
+  stop NAME                set spec.running=false (shuts the guest down, keeps the disk)
+  restart NAME             stop, wait until stopped, start
   ip NAME                  print the VM IP
   ssh NAME [-- ssh args]   ssh to the VM (default user ubuntu, see -l)
   console NAME             serial console, leave with Ctrl-]
@@ -53,6 +56,19 @@ func main() {
 		os.Stdout.Write(b)
 		return
 	}
+	switch cmd {
+	case "start":
+		fatal(setRunning(*kctx, *ns, name, true))
+		return
+	case "stop":
+		fatal(setRunning(*kctx, *ns, name, false))
+		return
+	case "restart":
+		fatal(setRunning(*kctx, *ns, name, false))
+		fatal(kubectl(*kctx, *ns, "wait", "--for=jsonpath={.status.phase}=Stopped", "--timeout=90s", "siliconvm/"+name))
+		fatal(setRunning(*kctx, *ns, name, true))
+		return
+	}
 	namespace, ip, err := lookup(*kctx, *ns, name)
 	if err != nil {
 		fatal(err)
@@ -80,6 +96,21 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
+}
+
+func setRunning(kctx, ns, name string, on bool) error {
+	return kubectl(kctx, ns, "patch", "siliconvm", name, "--type=merge", "-p", fmt.Sprintf(`{"spec":{"running":%t}}`, on))
+}
+
+// kubectl runs a kubectl command in the context (and namespace, if given), showing its output.
+func kubectl(kctx, ns string, args ...string) error {
+	pre := []string{"--context", kctx}
+	if ns != "" {
+		pre = append(pre, "-n", ns)
+	}
+	c := exec.Command("kubectl", append(pre, args...)...)
+	c.Stdout, c.Stderr = os.Stdout, os.Stderr
+	return c.Run()
 }
 
 // lookup reads namespace and status.ip with kubectl, so kubeconfig handling stays in one place.

@@ -20,11 +20,17 @@ type Config struct {
 	Sock                string // unix socket for an interactive serial console (one client at a time)
 	CPUs                uint
 	MemBytes            uint64
+	Nested              bool // let the guest run its own VMs (/dev/kvm); M3 or newer, macOS 15
 }
+
+// NestedSupported reports whether this Mac can give a guest /dev/kvm.
+func NestedSupported() bool { return vz.IsNestedVirtualizationSupported() }
 
 type VM struct {
 	vm   *vz.VirtualMachine
 	Done chan struct{} // closed when the VM stops (guest shutdown, error or Stop)
+	// Failed says the VM ended in the error state; read it after Done.
+	Failed bool
 
 	files []io.Closer
 	ln    net.Listener
@@ -49,6 +55,14 @@ func Start(c Config) (*VM, error) {
 	plat, err := vz.NewGenericPlatformConfiguration()
 	if err != nil {
 		return nil, err
+	}
+	if c.Nested {
+		if !NestedSupported() {
+			return nil, fmt.Errorf("nested virtualization needs an M3 or newer Mac and macOS 15")
+		}
+		if err := plat.SetNestedVirtualizationEnabled(true); err != nil {
+			return nil, err
+		}
 	}
 	cfg.SetPlatformVirtualMachineConfiguration(plat)
 
@@ -144,6 +158,7 @@ func Start(c Config) (*VM, error) {
 	go func() {
 		for s := range v.vm.StateChangedNotify() {
 			if s == vz.VirtualMachineStateStopped || s == vz.VirtualMachineStateError {
+				v.Failed = s == vz.VirtualMachineStateError
 				break
 			}
 		}

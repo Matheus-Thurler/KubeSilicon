@@ -16,7 +16,15 @@ stop_daemon() { kill -"${1:-TERM}" "$DPID"; wait "$DPID" 2>/dev/null || true; }
 vm_ssh() { ssh -i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 ubuntu@"$IP" "$@" 2>/dev/null; }
 no_launcher() { if pgrep -fl "[k]ubesilicond launch"; then echo "FAIL: launcher still running"; exit 1; fi; echo "$1"; }
 assert() { local m=$1; shift; if "$@"; then echo "$m"; else echo "FAIL: $m"; exit 1; fi; }
-cleanup() { kill -TERM "$DPID" 2>/dev/null || true; $K delete svm e2e --ignore-not-found --wait=false >/dev/null; }
+SLOW=
+cleanup() { [ -n "$SLOW" ] && kill "$SLOW" 2>/dev/null; kill -TERM "$DPID" 2>/dev/null || true; $K delete svm e2e slow --ignore-not-found --wait=false >/dev/null; }
+field() { $K get svm e2e -o jsonpath="{$1}"; }
+ready() { field '.status.conditions[?(@.type=="Ready")].status'; }
+wait_ready() { $K wait --for=condition=Ready svm/e2e --timeout=240s >/dev/null; }
+boot_id() { vm_ssh 'cat /proc/sys/kernel/random/boot_id'; }
+new_boot() { local b; b=$(boot_id) && [ -n "$b" ] && [ "$b" != "$1" ]; }
+# A hard kill is a power cut for the guest: anything it has not written to disk yet is lost.
+flush() { vm_ssh 'cloud-init status --wait >/dev/null; sync'; }
 trap cleanup EXIT
 
 mkdir -p "$ROOT"
@@ -33,6 +41,8 @@ metadata: { name: e2e }
 spec:
   cpu: 2
   memory: 2Gi
+  restartPolicy: OnFailure
+  nestedVirtualization: true
   disk: { source: $IMG, size: 10Gi }
   cloudInit:
     userData: |
@@ -48,8 +58,15 @@ YAML
 wait_phase Running
 IP=$(ip); echo "IP=$IP"
 
+log "condition Ready (kubectl wait)"
+wait_ready
+echo "ready"
+
 log "SSH from the Mac"
 for _ in $(seq 30); do vm_ssh 'hostname; uname -m; df -h / | tail -1' && break; sleep 3; done
+
+log "nested virtualization: the guest has /dev/kvm"
+assert "/dev/kvm present" vm_ssh 'test -c /dev/kvm'
 
 log "a pod in the cluster reaches the VM by IP and by DNS name"
 $K run e2e-probe --rm -i --restart=Never --image=busybox:1.36 --command -- sh -c "
@@ -76,7 +93,63 @@ vm_ssh 'echo still up'
 start_daemon; sleep 5
 assert "adopted, still Running" test "$(phase)" = Running
 
+log "restartPolicy OnFailure: kill -9 the launcher, the VM comes back"
+wait_ready; flush; before=$(boot_id)
+assert "read the boot id" test -n "$before"
+pkill -9 -f "[k]ubesilicond launch .*kubesilicon_e2e/"
+wait_phase Restarting
+assert "not Ready while down" test "$(ready)" = False
+wait_phase Running; wait_ready
+assert "restartCount 1" test "$(field .status.restartCount)" = 1
+assert "it is a new boot" new_boot "$before"
+
+log "OnFailure: a guest that shuts itself down stays stopped, even across a daemon restart"
+vm_ssh 'sudo poweroff' || true
+wait_phase Stopped
+assert "message says the guest shut down" grep -q "guest shut down" <<<"$(field .status.message)"
+stop_daemon; start_daemon; sleep 25
+assert "still Stopped" test "$(phase)" = Stopped
+
+log "CLI stop, start, restart"
+$CLI stop e2e
+for _ in $(seq 30); do grep -q "guest shut down" <<<"$(field .status.message)" || break; sleep 1; done
+$CLI start e2e
+wait_phase Running; wait_ready; before=$(boot_id)
+$CLI restart e2e
+wait_phase Running; wait_ready
+assert "restart is a new boot" new_boot "$before"
+assert "restartCount cleared by stop" test "$(field .status.restartCount)" = 0
+
+log "restartPolicy Always: back after a guest shutdown"
+$K patch svm e2e --type=merge -p '{"spec":{"restartPolicy":"Always"}}'
+before=$(boot_id); vm_ssh 'sudo poweroff' || true
+wait_phase Restarting; wait_phase Running; wait_ready
+assert "new boot after poweroff" new_boot "$before"
+
+log "a VM stuck downloading does not hold up the others"
+python3 -I -c 'import http.server, time
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(s): time.sleep(600)
+http.server.ThreadingHTTPServer(("127.0.0.1", 18766), H).serve_forever()' >/dev/null 2>&1 &
+SLOW=$!; sleep 1
+$K apply -f - <<YAML
+apiVersion: kubesilicon.io/v1
+kind: SiliconVM
+metadata: { name: slow }
+spec:
+  disk: { source: "http://127.0.0.1:18766/disk.img" }
+YAML
+for _ in $(seq 20); do [ "$($K get svm slow -o jsonpath='{.status.phase}')" = Provisioning ] && break; sleep 1; done
+$CLI stop e2e
+wait_phase Stopped
+assert "the slow VM is still Provisioning" test "$($K get svm slow -o jsonpath='{.status.phase}')" = Provisioning
+kill "$SLOW"; SLOW=
+$K delete svm slow --timeout=60s
+$CLI start e2e
+wait_phase Running
+
 log "running=false (through the adopted launcher)"
+stop_daemon; start_daemon; sleep 5
 $K patch svm e2e --type=merge -p '{"spec":{"running":false}}'
 wait_phase Stopped
 assert "ip cleared" test -z "$(ip)"

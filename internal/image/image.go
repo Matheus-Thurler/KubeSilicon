@@ -42,15 +42,19 @@ func Disk(src, sum, cacheDir, localDir, dest string, size int64) error {
 		return err
 	}
 	// -f pins the probed format, so convert cannot read the file as something else.
-	if out, err := exec.Command("qemu-img", "convert", "-f", format, "-O", "raw", src, dest).CombinedOutput(); err != nil {
+	// Built aside and renamed: a daemon killed in the middle must not leave a half disk that the
+	// next start would boot.
+	part := dest + ".part"
+	defer os.Remove(part)
+	if out, err := exec.Command("qemu-img", "convert", "-f", format, "-O", "raw", src, part).CombinedOutput(); err != nil {
 		return fmt.Errorf("qemu-img convert: %v: %s", err, out)
 	}
 	if size > 0 {
-		if out, err := exec.Command("qemu-img", "resize", "-f", "raw", dest, fmt.Sprint(size)).CombinedOutput(); err != nil {
+		if out, err := exec.Command("qemu-img", "resize", "-f", "raw", part, fmt.Sprint(size)).CombinedOutput(); err != nil {
 			return fmt.Errorf("qemu-img resize: %v: %s", err, out)
 		}
 	}
-	return nil
+	return os.Rename(part, dest)
 }
 
 // under resolves symlinks and returns path only if it is inside dir.

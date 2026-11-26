@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"syscall"
@@ -137,11 +138,24 @@ func main() {
 	log.Printf("kubesilicond ready (context %s)", *kctx)
 
 	go func() { <-ctx.Done(); d.q.ShutDown(); d.jq.ShutDown() }()
-	// ponytail: single worker, so provisioning (download) blocks other VMs. Add per-key workers if it hurts.
+	// Several workers, so a long image download does not hold up the other VMs. The queue never
+	// hands the same VM to two of them.
+	var wg sync.WaitGroup
+	for range vmWorkers {
+		wg.Add(1)
+		go func() { defer wg.Done(); d.runVMs(ctx) }()
+	}
+	wg.Wait()
+	log.Print("kubesilicond stopped; running VMs keep running")
+}
+
+const vmWorkers = 4
+
+func (d *daemon) runVMs(ctx context.Context) {
 	for {
 		k, shutdown := d.q.Get()
 		if shutdown {
-			break
+			return
 		}
 		after, err := d.reconcile(ctx, k)
 		switch {
@@ -149,13 +163,13 @@ func main() {
 			log.Printf("%s: %v", k, err)
 			d.q.AddRateLimited(k)
 		case after > 0:
+			d.q.Forget(k)
 			d.q.AddAfter(k, after)
 		default:
 			d.q.Forget(k)
 		}
 		d.q.Done(k)
 	}
-	log.Print("kubesilicond stopped; running VMs keep running")
 }
 
 // runJobs is its own worker: a job runs for a long time and must not block VM reconciles.
@@ -215,27 +229,38 @@ func (d *daemon) reconcile(ctx context.Context, key string) (time.Duration, erro
 	switch {
 	case !running:
 		d.stop(key)
-		return 0, d.setStatus(ctx, api, u, "Stopped", "", "")
+		forget(d.dir(key), exitFile, deadFile, restartsFile)
+		return 0, d.setStatus(ctx, api, u, "Stopped", "", "", false)
+	case v != nil && !alive, v == nil && readString(d.dir(key), exitFile) == exitShutdown:
+		// The second form: a daemon restart must not boot a guest that shut itself down.
+		return d.exited(ctx, api, u, key)
 	case v == nil:
-		if err := d.setStatus(ctx, api, u, "Provisioning", "", ""); err != nil {
+		if err := d.setStatus(ctx, api, u, "Provisioning", "", "", false); err != nil {
 			return 0, err
 		}
 		nr, err := d.provision(key, u)
 		if err != nil {
-			return 30 * time.Second, d.setStatus(ctx, api, u, "Failed", "", err.Error())
+			return 30 * time.Second, d.setStatus(ctx, api, u, "Failed", "", err.Error(), false)
 		}
 		d.mu.Lock()
 		d.vms[key] = nr
 		d.mu.Unlock()
 		return time.Second, nil
-	case !alive:
-		return 0, d.setStatus(ctx, api, u, "Stopped", "", "VM process exited (guest shutdown or error, see launcher.log and console.log in "+d.dir(key)+"); toggle spec.running to start it again")
 	}
 	ip := lease.IP(lease.File, hostname(u))
 	if ip == "" {
-		return 3 * time.Second, d.setStatus(ctx, api, u, "Starting", "", "")
+		return 3 * time.Second, d.setStatus(ctx, api, u, "Starting", "", "", false)
 	}
-	return 0, d.setStatus(ctx, api, u, "Running", ip, "")
+	port, _, _ := unstructured.NestedInt64(u.Object, "spec", "readinessPort")
+	if port == 0 {
+		port = 22
+	}
+	ready := probe(ip, port)
+	next := 10 * time.Second // also how soon a dead VM is noticed
+	if !ready {
+		next = 3 * time.Second
+	}
+	return next, d.setStatus(ctx, api, u, "Running", ip, "", ready)
 }
 
 func (d *daemon) provision(key string, u *unstructured.Unstructured) (*proc, error) {
@@ -257,6 +282,10 @@ func (d *daemon) provision(key string, u *unstructured.Unstructured) (*proc, err
 		cpu = 2
 	}
 	userData, _, _ := unstructured.NestedString(spec, "cloudInit", "userData")
+	nested, _, _ := unstructured.NestedBool(spec, "nestedVirtualization")
+	if nested && !vm.NestedSupported() {
+		return nil, fmt.Errorf("spec.nestedVirtualization needs an M3 or newer Mac and macOS 15")
+	}
 
 	dir := d.dir(key)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -277,9 +306,10 @@ func (d *daemon) provision(key string, u *unstructured.Unstructured) (*proc, err
 	if err := image.Seed(filepath.Join(dir, "seed"), iso, hostname(u), string(u.GetUID()), userData); err != nil {
 		return nil, err
 	}
+	forget(dir, exitFile, deadFile)
 	return spawnVM(dir, vm.Config{
 		Disk: disk, Seed: iso, EFIVars: filepath.Join(dir, "efivars"), Console: filepath.Join(dir, "console.log"), Sock: filepath.Join(dir, "console.sock"),
-		CPUs: uint(cpu), MemBytes: uint64(mem),
+		CPUs: uint(cpu), MemBytes: uint64(mem), Nested: nested,
 	})
 }
 
@@ -317,18 +347,20 @@ func (d *daemon) stop(key string) {
 	}
 }
 
-func (d *daemon) setStatus(ctx context.Context, api dynamic.ResourceInterface, u *unstructured.Unstructured, phase, ip, msg string) error {
-	cur, _, _ := unstructured.NestedStringMap(u.Object, "status")
-	if cur["phase"] == phase && cur["ip"] == ip && cur["message"] == msg {
+func (d *daemon) setStatus(ctx context.Context, api dynamic.ResourceInterface, u *unstructured.Unstructured, phase, ip, msg string, ready bool) error {
+	cur, _, _ := unstructured.NestedMap(u.Object, "status")
+	count := restarts(d.dir(u.GetNamespace() + "/" + u.GetName()))
+	st := vmStatus(cur, phase, ip, msg, ready, count, time.Now().UTC().Format(time.RFC3339))
+	if reflect.DeepEqual(st, cur) {
 		return nil
 	}
-	if cur["ip"] != ip {
+	if old, _ := cur["ip"].(string); old != ip {
 		if err := d.syncDNS(ctx, u, ip); err != nil {
 			return err
 		}
 	}
 	u = u.DeepCopy()
-	if err := unstructured.SetNestedField(u.Object, map[string]any{"phase": phase, "ip": ip, "message": msg}, "status"); err != nil {
+	if err := unstructured.SetNestedField(u.Object, st, "status"); err != nil {
 		return err
 	}
 	_, err := api.UpdateStatus(ctx, u, metav1.UpdateOptions{})

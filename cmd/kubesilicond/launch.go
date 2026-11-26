@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -24,6 +25,7 @@ func launch(args []string) {
 	fs.StringVar(&c.Sock, "sock", "", "console unix socket")
 	fs.UintVar(&cpus, "cpus", 2, "vCPUs")
 	fs.Uint64Var(&c.MemBytes, "mem", 2<<30, "memory in bytes")
+	fs.BoolVar(&c.Nested, "nested", false, "nested virtualization")
 	fs.Parse(args)
 	c.CPUs = cpus
 
@@ -38,6 +40,13 @@ func launch(args []string) {
 	select {
 	case <-sig:
 		v.Stop(20 * time.Second)
-	case <-v.Done:
+	case <-v.Done: // the guest ended by itself: tell the daemon how, for spec.restartPolicy
+		how := exitShutdown
+		if v.Failed {
+			how = exitError
+		}
+		if err := os.WriteFile(filepath.Join(filepath.Dir(c.Disk), exitFile), []byte(how), 0o644); err != nil {
+			log.Print(err)
+		}
 	}
 }

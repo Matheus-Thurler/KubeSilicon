@@ -32,7 +32,8 @@ func (p *proc) stop() {
 func spawnVM(dir string, c vm.Config) (*proc, error) {
 	return spawn(dir, "launch",
 		"-disk", c.Disk, "-seed", c.Seed, "-efi", c.EFIVars, "-console", c.Console, "-sock", c.Sock,
-		"-cpus", strconv.Itoa(int(c.CPUs)), "-mem", strconv.FormatUint(c.MemBytes, 10))
+		"-cpus", strconv.Itoa(int(c.CPUs)), "-mem", strconv.FormatUint(c.MemBytes, 10),
+		"-nested="+strconv.FormatBool(c.Nested))
 }
 
 // spawn starts "kubesilicond <sub> args..." detached (own session), logging to <dir>/launcher.log.

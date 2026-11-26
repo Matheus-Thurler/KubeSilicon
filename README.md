@@ -56,13 +56,22 @@ spec:
 
 ```sh
 kubectl apply -f vm.yaml
-kubectl get svm -w          # Provisioning -> Starting -> Running, with IP
+kubectl get svm -w          # Provisioning -> Starting -> Running, with IP and Ready
+kubectl wait --for=condition=Ready svm/demo --timeout=5m    # the guest answers on port 22
 make bin/kubesilicon        # the client
 ./bin/kubesilicon -context kind-<your-cluster> ssh demo
 # from a pod: ping/ssh demo.kubesilicon.svc (namespace of the SiliconVM)
-kubectl patch svm demo --type=merge -p '{"spec":{"running":false}}'   # stop, keeps the disk
+./bin/kubesilicon -context kind-<your-cluster> stop demo       # also start, restart; stop keeps the disk
 kubectl delete svm demo     # stops the VM and removes its disk
 ```
+
+### Readiness, restarts and nested virtualization
+
+| Field | Default | Meaning |
+|---|---|---|
+| `spec.restartPolicy` | `Never` | `OnFailure` starts the VM again when it dies (crash, killed process). `Always` also after the guest shuts itself down. The delay doubles from 10 s to 5 min; `status.restartCount` counts, and `running: false` resets it |
+| `spec.readinessPort` | `22` | The `Ready` condition is True while the guest accepts TCP connections on it |
+| `spec.nestedVirtualization` | `false` | The guest gets `/dev/kvm`, so it can run its own VMs. M3 or newer, macOS 15 or newer. Applies when the VM starts |
 
 Stopping `kubesilicond` does **not** stop the VMs. Stop a VM with `running: false`. When the daemon starts again it picks the running VMs back up.
 
@@ -182,19 +191,21 @@ Serial output is also written to `~/.kubesilicon/vms/<namespace>_<name>/console.
 |---|---|
 | Linux ARM64 guests, EFI boot, cloud images | macOS guests |
 | cloud-init (NoCloud ISO), `kubesilicon` client (`ip`, `ssh`, `console`) | Windowed or VNC console |
-| start, stop (ACPI, then forced), delete with finalizer | Automatic restart of a VM whose launcher died |
+| start, stop, restart (ACPI, then forced), delete with finalizer | Run strategies other than `restartPolicy` |
+| `Ready` condition, `restartPolicy`, nested virtualization (`/dev/kvm` in the guest) | Probes other than a TCP port |
 | Disk reuse across stop/start, qcow2 to raw conversion | Multiple Macs as nodes |
 | Pods reach the VM over NAT, by IP or DNS name | Live migration, hotplug, snapshots, GPU |
 | One process per VM: the daemon can stop, restart or crash and VMs keep running | |
 | Start at login (LaunchAgent), orphan cleanup | |
 
-Limits that come from Apple's framework: no live migration, no graphical console without a window. Nested virtualization in the guest exists on M3 and newer with macOS 15, but is not enabled yet. See [docs/design.md](docs/design.md) for the mapping to KubeVirt and the roadmap.
+Limits that come from Apple's framework: no live migration, no graphical console without a window. See [docs/design.md](docs/design.md) for the mapping to KubeVirt and the roadmap.
 
 ## Development
 
 ```sh
 make test              # unit tests
-hack/e2e.sh            # full cycle against a cluster; needs a kubeconfig context named "kubesilicon"
+hack/e2e.sh            # full VM cycle; needs a context named "kubesilicon" with namespace "kubesilicon"
+hack/e2e-job.sh <context> # SiliconJob cycle; needs a running kubesilicond
 ```
 
 Contributions are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md).
