@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -120,9 +121,16 @@ func (d *daemon) reconcileJob(ctx context.Context, key string) (time.Duration, e
 }
 
 // killStale kills the script's process group left by a runner that died (kill -9): without this
-// the retry would run next to it. ponytail: a reused pgid is not detected; the window is a reboot.
+// the retry would run next to it. A pgid written before the last boot is ignored: after a reboot
+// the number may belong to an unrelated process.
 func killStale(dir string) {
-	b, _ := os.ReadFile(filepath.Join(dir, "pgid"))
+	f := filepath.Join(dir, "pgid")
+	st, err := os.Stat(f)
+	boot, berr := unix.SysctlTimeval("kern.boottime")
+	if err != nil || berr != nil || st.ModTime().Before(time.Unix(boot.Unix())) {
+		return
+	}
+	b, _ := os.ReadFile(f)
 	if pg, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && pg > 1 {
 		syscall.Kill(-pg, syscall.SIGKILL)
 	}
@@ -184,7 +192,13 @@ func (d *daemon) admit(key string, u *unstructured.Unstructured) (string, error)
 	if js.Memory != "" && js.memBytes() == 0 {
 		return "", fmt.Errorf("spec.memory %q must be a positive quantity like 4Gi", js.Memory)
 	}
-	avail, total := mem.Available()
+	// The reading swings by gigabytes from one second to the next: take the lower of the last two.
+	now, total := mem.Available()
+	avail := now
+	if d.lastAvail > 0 {
+		avail = min(now, d.lastAvail)
+	}
+	d.lastAvail = now
 	wait, err := admission(js.memBytes(), d.runningJobs(key), avail, total, d.reserve)
 	if err != nil { // can never run: say so now, not after its turn in the queue
 		return "", err

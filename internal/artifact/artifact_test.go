@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -58,5 +59,18 @@ func TestContextBoundsHungServer(t *testing.T) {
 	}
 	if time.Since(start) > 3*time.Second {
 		t.Fatal("did not return when the context ended")
+	}
+}
+
+// Transport errors end up in status.message: they must not carry the signature of a presigned URL.
+func TestErrorsHideSignature(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "f")
+	os.WriteFile(f, []byte("x"), 0o644)
+	for _, u := range []string{"http://127.0.0.1:1/x?X-Amz-Signature=secret", "http://127.0.0.1:bad/x?X-Amz-Signature=secret"} {
+		for _, err := range []error{Download(context.Background(), u, f), Upload(context.Background(), f, u)} {
+			if err == nil || strings.Contains(err.Error(), "secret") {
+				t.Errorf("%s: %v", u, err)
+			}
+		}
 	}
 }

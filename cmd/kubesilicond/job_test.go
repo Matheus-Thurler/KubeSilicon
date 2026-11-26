@@ -125,3 +125,33 @@ func TestJobStatusTimes(t *testing.T) {
 		t.Fatalf("pending keeps startTime: %v", p)
 	}
 }
+
+func TestKillStaleIgnoresPgidFromBeforeBoot(t *testing.T) {
+	c := exec.Command("sleep", "30")
+	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	go func() { c.Wait(); close(done) }()
+	defer c.Process.Kill()
+	dir := t.TempDir()
+	f := filepath.Join(dir, "pgid")
+	os.WriteFile(f, []byte(strconv.Itoa(c.Process.Pid)), 0o644)
+	old := time.Unix(1, 0)
+	os.Chtimes(f, old, old)
+	killStale(dir)
+	select {
+	case <-done:
+		t.Fatal("killed a group recorded before the boot")
+	case <-time.After(200 * time.Millisecond):
+	}
+	now := time.Now()
+	os.Chtimes(f, now, now)
+	killStale(dir)
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("group of this boot not killed")
+	}
+}
