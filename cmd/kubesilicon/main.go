@@ -6,12 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/Matheus-Thurler/kubesilicon/internal/unixsock"
 )
 
 const usage = `usage: kubesilicon [-context C] [-n NAMESPACE] <command> NAME [args]
@@ -173,7 +174,7 @@ func contextNamespace(kctx string) (string, error) {
 
 // console attaches the terminal to the VM serial socket. Ctrl-] leaves; stdin EOF leaves too.
 func console(sock string) error {
-	c, err := net.Dial("unix", sock)
+	c, err := unixsock.Dial(sock)
 	if err != nil {
 		return fmt.Errorf("console: %v (is the VM running?)", err)
 	}

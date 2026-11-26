@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Code-Hex/vz/v3"
+	"github.com/Matheus-Thurler/kubesilicon/internal/unixsock"
 )
 
 type Config struct {
@@ -120,7 +121,7 @@ func Start(c Config) (*VM, error) {
 	}
 	v.files = append(v.files, inR, inW, outR, outW)
 	os.Remove(c.Sock)
-	if v.ln, err = net.Listen("unix", c.Sock); err != nil {
+	if v.ln, err = unixsock.Listen(c.Sock); err != nil {
 		return fail(err)
 	}
 	if err := os.Chmod(c.Sock, 0o600); err != nil {
