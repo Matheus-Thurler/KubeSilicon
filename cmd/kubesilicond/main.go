@@ -52,6 +52,7 @@ type daemon struct {
 
 	lastAvail uint64                          // previous memory reading; only the job worker touches it
 	runner    func(dir string) (*proc, error) // starts the job runner; nil: the real one (a seam for tests)
+	leases    string                          // DHCP lease file; a test points it at a fixture
 }
 
 func main() {
@@ -94,7 +95,7 @@ func main() {
 	newQ := func() workqueue.TypedRateLimitingInterface[string] {
 		return workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())
 	}
-	d := &daemon{c: c, root: *root, vms: map[string]*proc{}, jobs: map[string]*proc{}, q: newQ(), jq: newQ(), reserve: keep}
+	d := &daemon{c: c, root: *root, vms: map[string]*proc{}, jobs: map[string]*proc{}, q: newQ(), jq: newQ(), reserve: keep, leases: lease.File}
 	for _, sub := range []string{"cache", "images", "vms", "jobs"} {
 		if err := os.MkdirAll(filepath.Join(d.root, sub), 0o755); err != nil {
 			log.Fatal(err)
@@ -248,7 +249,7 @@ func (d *daemon) reconcile(ctx context.Context, key string) (time.Duration, erro
 		d.mu.Unlock()
 		return time.Second, nil
 	}
-	ip := lease.IP(lease.File, hostname(u))
+	ip := lease.IP(d.leases, hostname(u))
 	if ip == "" {
 		return 3 * time.Second, d.setStatus(ctx, api, u, "Starting", "", "", false)
 	}
@@ -352,13 +353,16 @@ func (d *daemon) setStatus(ctx context.Context, api dynamic.ResourceInterface, u
 	cur, _, _ := unstructured.NestedMap(u.Object, "status")
 	count := restarts(d.dir(u.GetNamespace() + "/" + u.GetName()))
 	st := vmStatus(cur, phase, ip, msg, ready, count, time.Now().UTC().Format(time.RFC3339))
+	// The Service and EndpointSlice are published on every pass, not only when the IP moves: with
+	// the status unchanged, a Service deleted by hand would never come back. A failure is logged and
+	// does not stop the status, because DNS is not what makes the VM Ready.
+	// ponytail: two applies per pass, one Mac and a few VMs. A fleet would watch the Service
+	// instead, or remember the last applied IP and re-check on a timer.
+	if err := d.syncDNS(ctx, u, ip); err != nil {
+		log.Printf("%s/%s: publish DNS: %v", u.GetNamespace(), u.GetName(), err)
+	}
 	if reflect.DeepEqual(st, cur) {
 		return nil
-	}
-	if old, _ := cur["ip"].(string); old != ip {
-		if err := d.syncDNS(ctx, u, ip); err != nil {
-			return err
-		}
 	}
 	obj := u // the caller's object, kept current: it may write again in the same pass
 	u = u.DeepCopy()

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -177,4 +178,45 @@ func TestReconcileFailedProvisionKeepsItsStatus(t *testing.T) {
 			t.Fatalf("pass %d: %s after a provision that cannot work, want Failed", i, phase)
 		}
 	}
+}
+
+// The Service and EndpointSlice carry the VM's name, so they are published on every pass: with the
+// status (and so the IP) unchanged, a Service deleted by hand would never come back. A failed
+// publish cannot keep the VM out of Running either, because DNS is not what makes it ready.
+func TestReconcileVMRepublishesDNS(t *testing.T) {
+	d, api, _ := vmFixture(t, map[string]any{"running": true, "readinessPort": int64(1)})
+	u, err := api.Get(context.Background(), "v", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.leases = filepath.Join(d.root, "leases")
+	lease := fmt.Sprintf("{\n\tname=%s\n\tip_address=127.0.0.1\n\tlease=0x1\n}\n", hostname(u))
+	if err := os.WriteFile(d.leases, []byte(lease), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d.vms["default/v"] = &proc{os.Getpid()} // a launcher that is alive: the VM is up
+	for i := 1; i <= 2; i++ {
+		if _, err := d.reconcile(context.Background(), "default/v"); err != nil {
+			t.Fatalf("pass %d: %v", i, err)
+		}
+	}
+	if phase, ip := vmPhase(t, api); phase != "Running" || ip != "127.0.0.1" {
+		t.Fatalf("%s at %q", phase, ip)
+	}
+	for _, r := range []string{"services", "endpointslices"} {
+		if n := patches(d.c, r); n != 2 {
+			t.Errorf("%d patches on %s, want one per pass", n, r)
+		}
+	}
+}
+
+// patches counts the server-side applies the daemon sent for a resource.
+func patches(c dynamic.Interface, resource string) int {
+	n := 0
+	for _, a := range c.(*fake.FakeDynamicClient).Actions() {
+		if a.GetVerb() == "patch" && a.GetResource().Resource == resource {
+			n++
+		}
+	}
+	return n
 }
