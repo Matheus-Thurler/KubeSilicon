@@ -1,4 +1,4 @@
-.PHONY: install uninstall test
+.PHONY: install uninstall test check
 ENT = hack/vz.entitlements
 
 bin/kubesilicond: $(shell find cmd/kubesilicond internal -name '*.go')
@@ -7,6 +7,15 @@ bin/kubesilicond: $(shell find cmd/kubesilicond internal -name '*.go')
 
 test:
 	go test ./...
+
+# make check: what CI runs, before every commit. Tracked and new Go files only, so the agent
+# worktrees under .claude/ are not formatted.
+GOFMT = gofmt -l $(shell git ls-files -co --exclude-standard '*.go')
+
+check:
+	@test -z "$$($(GOFMT))" || { $(GOFMT); exit 1; }
+	go vet ./...
+	go test -race ./...
 
 bin/kubesilicon: $(shell find cmd/kubesilicon -name '*.go')
 	go build -o $@ ./cmd/kubesilicon
