@@ -110,6 +110,16 @@ assert "message says the guest shut down" grep -q "guest shut down" <<<"$(field 
 stop_daemon; start_daemon; sleep 25
 assert "still Stopped" test "$(phase)" = Stopped
 
+log "restartPolicy Never: a VM whose launcher recorded an error stays stopped across a restart"
+# The launcher writes vmexit only when the guest ended by itself; a framework error is hard to
+# provoke on purpose, so the file is written by hand and the daemon has to make the decision.
+$K patch svm e2e --type=merge -p '{"spec":{"restartPolicy":"Never"}}'
+echo error >"$ROOT/vms/kubesilicon_e2e/vmexit"
+stop_daemon KILL; start_daemon; sleep 10
+assert "not booted again" test "$(phase)" = Stopped
+no_launcher "no launcher for the crashed VM"
+assert "message points at the launcher log" grep -q "VM process exited" <<<"$(field .status.message)"
+
 log "CLI stop, start, restart"
 $CLI start e2e          # running is still true here: start has to stop it first
 wait_phase Running; wait_ready; flush
