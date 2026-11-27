@@ -9,7 +9,7 @@ Issues and pull requests are welcome. This is an early project, so open an issue
 
 ## Before sending a PR
 
-- `gofmt -l .` prints nothing, `go vet ./...` and `go test ./...` pass.
+- `make check` passes: gofmt prints nothing, `go vet` is clean, `go test -race` is green.
 - Logic that is not trivial comes with a small test (see `internal/lease`).
 - Changes to the reconcile loop, VM lifecycle or networking: run `hack/e2e.sh` and say so in the PR. CI cannot run it, because GitHub-hosted macOS runners do not provide nested virtualization.
 - Keep the diff small. No new dependency for something the standard library or client-go already does.

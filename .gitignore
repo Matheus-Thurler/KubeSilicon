@@ -9,3 +9,8 @@ media/
 __pycache__/
 *.pyc
 examples/kubeflow/*.yaml
+
+# agent worktrees: each agent works on its own branch
+.claude/worktrees/
+/worktrees/
+.claude/settings.local.json
