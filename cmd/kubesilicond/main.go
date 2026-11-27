@@ -231,8 +231,9 @@ func (d *daemon) reconcile(ctx context.Context, key string) (time.Duration, erro
 		d.stop(key)
 		forget(d.dir(key), exitFile, deadFile, restartsFile)
 		return 0, d.setStatus(ctx, api, u, "Stopped", "", "", false)
-	case v != nil && !alive, v == nil && readString(d.dir(key), exitFile) == exitShutdown:
-		// The second form: a daemon restart must not boot a guest that shut itself down.
+	case v != nil && !alive, v == nil && readString(d.dir(key), exitFile) != "":
+		// The second form: after a daemon restart a guest that ended by itself is not booted again,
+		// and restartPolicy gets the same say as when the launcher died in view.
 		return d.exited(ctx, api, u, key)
 	case v == nil:
 		if err := d.setStatus(ctx, api, u, "Provisioning", "", "", false); err != nil {
