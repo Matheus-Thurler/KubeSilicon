@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.1](https://github.com/Matheus-Thurler/KubeSilicon/compare/v0.5.0...v0.5.1) (2026-11-27)
+
+
+### Bug Fixes
+
+* **kfp:** tell the step when the log tail stops at 4 KiB ([4f61038](https://github.com/Matheus-Thurler/KubeSilicon/commit/4f610381ea36f48a31772cb83af560b05972628d))
+* **kfp:** tell the step when the log tail stops at 4 KiB ([8cb39d3](https://github.com/Matheus-Thurler/KubeSilicon/commit/8cb39d387ae05b5c00c5521b4dba13cbbb31eb60))
+* one daemon per Mac, or two guests open the same disk ([0cbe763](https://github.com/Matheus-Thurler/KubeSilicon/commit/0cbe763e82a9d93aeb3ccfe660ef6eb63082d019))
+* one daemon per Mac, or two guests open the same disk ([3e931f0](https://github.com/Matheus-Thurler/KubeSilicon/commit/3e931f00d1ee1276e407d542d064a945c1135119))
+* serial console socket with long VM paths ([23522fc](https://github.com/Matheus-Thurler/KubeSilicon/commit/23522fc6c97e5529b71d2a0a67ef8a5554654b00))
+* serial console socket with long VM paths ([f4f3172](https://github.com/Matheus-Thurler/KubeSilicon/commit/f4f3172bd7f2f9d4535cad71af6385a3b4164e43))
+* the second status write of a pass is compared with the old one ([fb61e56](https://github.com/Matheus-Thurler/KubeSilicon/commit/fb61e56e83181f03329d59521f2ba44163f0ad1d))
+* **vm:** a crashed VM stays stopped after a daemon restart ([53131f3](https://github.com/Matheus-Thurler/KubeSilicon/commit/53131f337d982a4b9d98a1a99ffb96a1493e63ee))
+* **vm:** restarts, status writes and DNS after a daemon restart ([0792122](https://github.com/Matheus-Thurler/KubeSilicon/commit/079212234616a447956f4688d4d1dd5da715e76c))
+* **vm:** the Service comes back when it goes missing ([a2029df](https://github.com/Matheus-Thurler/KubeSilicon/commit/a2029dfeaa1ac60d1d42a62128741ff268827b5d))
+
 ## [0.5.0](https://github.com/Matheus-Thurler/KubeSilicon/compare/v0.4.0...v0.5.0) (2026-11-26)
 
 
