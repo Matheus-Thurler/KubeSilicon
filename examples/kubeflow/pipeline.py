@@ -24,14 +24,19 @@ def silicon_job(script: str, dependencies: list, timeout_seconds: int = 1800, pe
         "spec": {"script": script, "dependencies": dependencies, "timeoutSeconds": timeout_seconds,
                  "inputs": inputs, "outputs": outputs},
     })
-    shown, phase, waiting_since = 0, "", time.time()
+    tail_max = 4096  # status.logTail is the last 4 KiB of the job log (cmd/kubesilicond/job.go)
+    shown, phase, waiting_since, truncated = 0, "", time.time(), False
     try:
         while True:
             st = api.get_namespaced_custom_object(*args, name).get("status", {})
             tail = st.get("logTail", "")
-            if len(tail) > shown:  # logTail is the last 4 KiB; print what is new
+            if len(tail) > shown:  # print what is new since the last poll
                 print(tail[shown:], end="", flush=True)
                 shown = len(tail)
+            elif len(tail.encode()) >= tail_max and not truncated:
+                truncated = True  # the tail stopped growing because it hit its cap, not because the job went quiet
+                print(f"\n[kubesilicon] log tail truncated at {tail_max} bytes: "
+                      f"run 'kubesilicon logs {name}' on the Mac for the rest\n", flush=True)
             phase = st.get("phase", "")
             if phase in ("Succeeded", "Failed", "Cancelled"):
                 break
