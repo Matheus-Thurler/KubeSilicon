@@ -52,6 +52,7 @@ type daemon struct {
 
 	lastAvail uint64                          // previous memory reading; only the job worker touches it
 	runner    func(dir string) (*proc, error) // starts the job runner; nil: the real one (a seam for tests)
+	leases    string                          // DHCP lease file; a test points it at a fixture
 }
 
 func main() {
@@ -94,7 +95,7 @@ func main() {
 	newQ := func() workqueue.TypedRateLimitingInterface[string] {
 		return workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]())
 	}
-	d := &daemon{c: c, root: *root, vms: map[string]*proc{}, jobs: map[string]*proc{}, q: newQ(), jq: newQ(), reserve: keep}
+	d := &daemon{c: c, root: *root, vms: map[string]*proc{}, jobs: map[string]*proc{}, q: newQ(), jq: newQ(), reserve: keep, leases: lease.File}
 	for _, sub := range []string{"cache", "images", "vms", "jobs"} {
 		if err := os.MkdirAll(filepath.Join(d.root, sub), 0o755); err != nil {
 			log.Fatal(err)
@@ -236,8 +237,9 @@ func (d *daemon) reconcile(ctx context.Context, key string) (time.Duration, erro
 		d.stop(key)
 		forget(d.dir(key), exitFile, deadFile, restartsFile)
 		return 0, d.setStatus(ctx, api, u, "Stopped", "", "", false)
-	case v != nil && !alive, v == nil && readString(d.dir(key), exitFile) == exitShutdown:
-		// The second form: a daemon restart must not boot a guest that shut itself down.
+	case v != nil && !alive, v == nil && readString(d.dir(key), exitFile) != "":
+		// The second form: after a daemon restart a guest that ended by itself is not booted again,
+		// and restartPolicy gets the same say as when the launcher died in view.
 		return d.exited(ctx, api, u, key)
 	case v == nil:
 		if err := d.setStatus(ctx, api, u, "Provisioning", "", "", false); err != nil {
@@ -252,7 +254,7 @@ func (d *daemon) reconcile(ctx context.Context, key string) (time.Duration, erro
 		d.mu.Unlock()
 		return time.Second, nil
 	}
-	ip := lease.IP(lease.File, hostname(u))
+	ip := lease.IP(d.leases, hostname(u))
 	if ip == "" {
 		return 3 * time.Second, d.setStatus(ctx, api, u, "Starting", "", "", false)
 	}
@@ -356,20 +358,27 @@ func (d *daemon) setStatus(ctx context.Context, api dynamic.ResourceInterface, u
 	cur, _, _ := unstructured.NestedMap(u.Object, "status")
 	count := restarts(d.dir(u.GetNamespace() + "/" + u.GetName()))
 	st := vmStatus(cur, phase, ip, msg, ready, count, time.Now().UTC().Format(time.RFC3339))
+	// The Service and EndpointSlice are published on every pass, not only when the IP moves: with
+	// the status unchanged, a Service deleted by hand would never come back. A failure is logged and
+	// does not stop the status, because DNS is not what makes the VM Ready.
+	// ponytail: two applies per pass, one Mac and a few VMs. A fleet would watch the Service
+	// instead, or remember the last applied IP and re-check on a timer.
+	if err := d.syncDNS(ctx, u, ip); err != nil {
+		log.Printf("%s/%s: publish DNS: %v", u.GetNamespace(), u.GetName(), err)
+	}
 	if reflect.DeepEqual(st, cur) {
 		return nil
 	}
-	if old, _ := cur["ip"].(string); old != ip {
-		if err := d.syncDNS(ctx, u, ip); err != nil {
-			return err
-		}
-	}
+	obj := u // the caller's object, kept current: it may write again in the same pass
 	u = u.DeepCopy()
 	if err := unstructured.SetNestedField(u.Object, st, "status"); err != nil {
 		return err
 	}
-	_, err := api.UpdateStatus(ctx, u, metav1.UpdateOptions{})
-	return err
+	if _, err := api.UpdateStatus(ctx, u, metav1.UpdateOptions{}); err != nil {
+		return err
+	}
+	obj.Object["status"] = st
+	return nil
 }
 
 func quantity(spec map[string]any, def int64, path ...string) (int64, error) {

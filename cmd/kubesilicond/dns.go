@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -33,6 +34,7 @@ func (d *daemon) syncDNS(ctx context.Context, u *unstructured.Unstructured, ip s
 	for k, v := range meta {
 		sliceMeta[k] = v
 	}
+	var errs []error
 	for _, o := range []struct {
 		gvr schema.GroupVersionResource
 		obj map[string]any
@@ -42,13 +44,15 @@ func (d *daemon) syncDNS(ctx context.Context, u *unstructured.Unstructured, ip s
 	} {
 		b, err := json.Marshal(o.obj)
 		if err != nil {
-			return err
+			errs = append(errs, err)
+			continue
 		}
 		force := true
 		if _, err := d.c.Resource(o.gvr).Namespace(u.GetNamespace()).Patch(ctx, u.GetName(), types.ApplyPatchType, b,
 			metav1.PatchOptions{FieldManager: "kubesilicond", Force: &force}); err != nil {
-			return err
+			// Still try the other one: a Service that fails must not leave the slice stale.
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }

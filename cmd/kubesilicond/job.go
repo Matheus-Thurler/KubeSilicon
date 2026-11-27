@@ -358,15 +358,17 @@ func (d *daemon) setJobStatusN(ctx context.Context, api dynamic.ResourceInterfac
 	if reflect.DeepEqual(st, cur) {
 		return nil
 	}
+	obj := u // the caller's object, kept current: a start writes Pending and then Running
 	u = u.DeepCopy()
 	if err := unstructured.SetNestedField(u.Object, st, "status"); err != nil {
 		return err
 	}
-	_, err := api.UpdateStatus(ctx, u, metav1.UpdateOptions{})
-	if err == nil {
-		log.Printf("job %s/%s: %s %s", u.GetNamespace(), u.GetName(), phase, msg)
+	if _, err := api.UpdateStatus(ctx, u, metav1.UpdateOptions{}); err != nil {
+		return err
 	}
-	return err
+	obj.Object["status"] = st
+	log.Printf("job %s/%s: %s %s", u.GetNamespace(), u.GetName(), phase, msg)
+	return nil
 }
 
 func readTail(path string, n int64) string {

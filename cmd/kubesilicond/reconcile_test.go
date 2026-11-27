@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -109,4 +110,113 @@ func TestReconcileJobCancelled(t *testing.T) {
 	if st := status(t, api); st["phase"] != "Cancelled" {
 		t.Fatalf("second pass: %v", st)
 	}
+}
+
+// vmFixture is a daemon on a fake cluster holding one SiliconVM "default/v", with its VM directory.
+func vmFixture(t *testing.T, spec map[string]any) (*daemon, dynamic.ResourceInterface, string) {
+	t.Helper()
+	u := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "kubesilicon.io/v1", "kind": "SiliconVM",
+		"metadata": map[string]any{"name": "v", "namespace": "default", "uid": "6f3a1c2e-1f00-4c00-9a00-000000000000"},
+		"spec":     spec,
+	}}
+	c := fake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), map[schema.GroupVersionResource]string{gvr: "SiliconVMList"}, u)
+	d := &daemon{c: c, root: t.TempDir(), vms: map[string]*proc{}}
+	return d, c.Resource(gvr).Namespace("default"), d.dir("default/v")
+}
+
+// vmPhase reads the status of the single SiliconVM in the fake cluster.
+func vmPhase(t *testing.T, api dynamic.ResourceInterface) (phase, ip string) {
+	t.Helper()
+	u, err := api.Get(context.Background(), "v", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	phase, _, _ = unstructured.NestedString(u.Object, "status", "phase")
+	ip, _, _ = unstructured.NestedString(u.Object, "status", "ip")
+	return phase, ip
+}
+
+// A VM whose launcher ended by itself must not be booted again after a daemon restart: exited()
+// applies spec.restartPolicy to it, the same as when the launcher dies with the daemon looking.
+func TestReconcileVMDownAfterRestart(t *testing.T) {
+	for _, c := range []struct{ exit, policy, want string }{
+		{exitError, "Never", "Stopped"},
+		{exitError, "OnFailure", "Restarting"},
+		{exitShutdown, "OnFailure", "Stopped"},
+		{exitShutdown, "Always", "Restarting"},
+	} {
+		d, api, dir := vmFixture(t, map[string]any{"running": true, "restartPolicy": c.policy})
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, exitFile), []byte(c.exit), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.reconcile(context.Background(), "default/v"); err != nil {
+			t.Fatalf("%s with %s: %v", c.exit, c.policy, err)
+		}
+		if phase, _ := vmPhase(t, api); phase != c.want {
+			t.Errorf("%s with %s: %s, want %s", c.exit, c.policy, phase, c.want)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "pid")); err == nil {
+			t.Errorf("%s with %s: a launcher was started", c.exit, c.policy)
+		}
+	}
+}
+
+// A pass can write twice (Provisioning, then Failed). The second write compares against the object
+// the pass started with, so without keeping that object current the Failed is dropped and the VM
+// shows Provisioning for as long as it keeps failing.
+func TestReconcileFailedProvisionKeepsItsStatus(t *testing.T) {
+	d, api, _ := vmFixture(t, map[string]any{"running": true})
+	for i := 1; i <= 2; i++ {
+		if _, err := d.reconcile(context.Background(), "default/v"); err != nil {
+			t.Fatal(err)
+		}
+		if phase, _ := vmPhase(t, api); phase != "Failed" {
+			t.Fatalf("pass %d: %s after a provision that cannot work, want Failed", i, phase)
+		}
+	}
+}
+
+// The Service and EndpointSlice carry the VM's name, so they are published on every pass: with the
+// status (and so the IP) unchanged, a Service deleted by hand would never come back. A failed
+// publish cannot keep the VM out of Running either, because DNS is not what makes it ready.
+func TestReconcileVMRepublishesDNS(t *testing.T) {
+	d, api, _ := vmFixture(t, map[string]any{"running": true, "readinessPort": int64(1)})
+	u, err := api.Get(context.Background(), "v", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.leases = filepath.Join(d.root, "leases")
+	lease := fmt.Sprintf("{\n\tname=%s\n\tip_address=127.0.0.1\n\tlease=0x1\n}\n", hostname(u))
+	if err := os.WriteFile(d.leases, []byte(lease), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d.vms["default/v"] = &proc{os.Getpid()} // a launcher that is alive: the VM is up
+	for i := 1; i <= 2; i++ {
+		if _, err := d.reconcile(context.Background(), "default/v"); err != nil {
+			t.Fatalf("pass %d: %v", i, err)
+		}
+	}
+	if phase, ip := vmPhase(t, api); phase != "Running" || ip != "127.0.0.1" {
+		t.Fatalf("%s at %q", phase, ip)
+	}
+	for _, r := range []string{"services", "endpointslices"} {
+		if n := patches(d.c, r); n != 2 {
+			t.Errorf("%d patches on %s, want one per pass", n, r)
+		}
+	}
+}
+
+// patches counts the server-side applies the daemon sent for a resource.
+func patches(c dynamic.Interface, resource string) int {
+	n := 0
+	for _, a := range c.(*fake.FakeDynamicClient).Actions() {
+		if a.GetVerb() == "patch" && a.GetResource().Resource == resource {
+			n++
+		}
+	}
+	return n
 }
