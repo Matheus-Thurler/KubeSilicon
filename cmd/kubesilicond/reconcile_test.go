@@ -163,3 +163,18 @@ func TestReconcileVMDownAfterRestart(t *testing.T) {
 		}
 	}
 }
+
+// A pass can write twice (Provisioning, then Failed). The second write compares against the object
+// the pass started with, so without keeping that object current the Failed is dropped and the VM
+// shows Provisioning for as long as it keeps failing.
+func TestReconcileFailedProvisionKeepsItsStatus(t *testing.T) {
+	d, api, _ := vmFixture(t, map[string]any{"running": true})
+	for i := 1; i <= 2; i++ {
+		if _, err := d.reconcile(context.Background(), "default/v"); err != nil {
+			t.Fatal(err)
+		}
+		if phase, _ := vmPhase(t, api); phase != "Failed" {
+			t.Fatalf("pass %d: %s after a provision that cannot work, want Failed", i, phase)
+		}
+	}
+}

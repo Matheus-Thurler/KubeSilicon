@@ -360,12 +360,16 @@ func (d *daemon) setStatus(ctx context.Context, api dynamic.ResourceInterface, u
 			return err
 		}
 	}
+	obj := u // the caller's object, kept current: it may write again in the same pass
 	u = u.DeepCopy()
 	if err := unstructured.SetNestedField(u.Object, st, "status"); err != nil {
 		return err
 	}
-	_, err := api.UpdateStatus(ctx, u, metav1.UpdateOptions{})
-	return err
+	if _, err := api.UpdateStatus(ctx, u, metav1.UpdateOptions{}); err != nil {
+		return err
+	}
+	obj.Object["status"] = st
+	return nil
 }
 
 func quantity(spec map[string]any, def int64, path ...string) (int64, error) {
