@@ -100,6 +100,11 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	release, err := singleton(d.root)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer release()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
