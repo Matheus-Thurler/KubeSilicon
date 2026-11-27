@@ -73,7 +73,7 @@ kubectl delete svm demo     # stops the VM and removes its disk
 | `spec.readinessPort` | `22` | The `Ready` condition is True while the guest accepts TCP connections on it |
 | `spec.nestedVirtualization` | `false` | The guest gets `/dev/kvm`, so it can run its own VMs. M3 or newer, macOS 15 or newer. Applies when the VM starts |
 
-Stopping `kubesilicond` does **not** stop the VMs. Stop a VM with `running: false`. When the daemon starts again it picks the running VMs back up.
+Stopping `kubesilicond` does **not** stop the VMs. Stop a VM with `running: false`. When the daemon starts again it picks the running VMs back up, and a VM that ended in the meantime and recorded how (guest shutdown or framework error) gets its `restartPolicy` applied. A launcher killed while the daemon was down leaves no record and is started again. Only one daemon runs per state directory: a second one exits with `another kubesilicond is running`.
 
 ## GPU jobs (SiliconJob)
 
@@ -149,12 +149,12 @@ About 5x faster on the GPU, same accuracy. The small MLP in the pipeline example
 
 ```sh
 hack/kind-kubeflow.sh                       # kind (k8s 1.34) + cert-manager + KFP 2.18 + CRDs + RBAC; needs Docker with 12 GB
-./bin/kubesilicond -context kind-kubeflow   # or: make install CTX=kind-kubeflow
+make install CTX=kind-kubeflow              # start the daemon (skip if it is already installed for this cluster)
 python examples/kubeflow/pipeline.py        # needs `pip install kfp`; writes train_on_mac_gpu.yaml
 kubectl --context kind-kubeflow -n kubeflow port-forward svc/ml-pipeline-ui 8080:80   # upload the YAML at http://localhost:8080
 ```
 
-The `silicon_job` component in `examples/kubeflow/pipeline.py` creates a `SiliconJob` and waits for it; the job log appears in the step log. Jobs survive a daemon restart and are retried if the Mac reboots (`backoffLimit`). To run this beyond a laptop lab, read [docs/production.md](docs/production.md). Needs [`uv`](https://docs.astral.sh/uv/). See [docs/design.md](docs/design.md).
+The `silicon_job` component in `examples/kubeflow/pipeline.py` creates a `SiliconJob` and waits for it; the job log appears in the step log, up to the last 4 KiB kept in `status.logTail`; past that the step says it is truncated and `kubesilicon logs NAME` on the Mac shows the rest. Jobs survive a daemon restart and are retried if the Mac reboots (`backoffLimit`). To run this beyond a laptop lab, read [docs/production.md](docs/production.md). Needs [`uv`](https://docs.astral.sh/uv/). See [docs/design.md](docs/design.md).
 
 ### Training example: Fashion-MNIST
 
@@ -218,6 +218,7 @@ Write-ups with the reasoning and the measurements behind each release (also in P
 - [Training on the Mac GPU from Kubeflow Pipelines](https://matheusthurler.com.br/posts/kubeflow-pipelines-apple-silicon-gpu-kubesilicon/): `SiliconJob`, the Fashion-MNIST pipeline and the GPU vs CPU benchmarks (v0.3).
 - [Running GPU jobs in parallel on one Mac](https://matheusthurler.com.br/posts/parallel-gpu-jobs-mac-kubesilicon/): the memory-based queue and the per-job limit (v0.4).
 - [Running is not Ready: KubeVirt ideas for VMs on a Mac](https://matheusthurler.com.br/posts/kubevirt-ideas-vm-readiness-kubesilicon/): the `Ready` condition, `restartPolicy` and the tighter job sandbox (v0.5).
+- [Two daemons, one disk: the bugs that show up after day one](https://matheusthurler.com.br/posts/two-daemons-one-disk-kubesilicon/): the daemon lock, restarts after a daemon restart, status, DNS and socket path fixes (v0.5.1).
 
 ## Sponsor
 
